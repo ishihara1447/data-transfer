@@ -8,7 +8,7 @@
 #      （特に派生表 order_enriched は delete_src_table=ORDERS 経由で削除伝播）
 
 set -uo pipefail
-ROOT="/home/ishihara1447/projects/data-transfer"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SRC="oracle-src"; TGT="oracle-tgt"
 OID=9200001
 

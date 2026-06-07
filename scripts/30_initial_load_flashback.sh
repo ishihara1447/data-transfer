@@ -51,7 +51,7 @@ echo "  baseline_scn = ${BASELINE_SCN}"
 # ----------------------------------------------------------------
 echo ""
 echo "[2] oracle-src: expdp FLASHBACK_SCN=${BASELINE_SCN}"
-SRC_PASS=$(grep '^CDC_SCHEMA_PASS=' /home/ishihara1447/projects/data-transfer/.env | cut -d= -f2)
+SRC_PASS=$(grep '^CDC_SCHEMA_PASS=' "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"/.env | cut -d= -f2)
 cat > "${HOST_TMP}/expdp_initial.par" << EOF
 userid=cdc_schema/${SRC_PASS}@//localhost:1521/XEPDB1
 tables=${TABLES}

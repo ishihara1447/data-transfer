@@ -73,7 +73,7 @@ echo "[1/4] oracle-src: expdp で delta_queue をエクスポート (delta_id > 
 
 # cdc_schema で接続（特殊文字なしパスワード = 認証エラー回避）
 # DATAPUMP_EXP_FULL_DATABASE 権限を付与済み
-SRC_PASS=$(grep '^CDC_SCHEMA_PASS=' /home/ishihara1447/projects/data-transfer/.env | cut -d= -f2)
+SRC_PASS=$(grep '^CDC_SCHEMA_PASS=' "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"/.env | cut -d= -f2)
 
 cat > "${HOST_TMP}/expdp_delta.par" << EOF
 userid=cdc_schema/${SRC_PASS}@//localhost:1521/XEPDB1

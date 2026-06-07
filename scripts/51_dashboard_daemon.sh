@@ -11,7 +11,7 @@
 # 停止: Ctrl-C もしくは max_iter 到達
 
 set -uo pipefail
-ROOT="/home/ishihara1447/projects/data-transfer"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 INTERVAL="${1:-10}"
 MAX_ITER="${2:-0}"
 OUT="${3:-${ROOT}/out/migration_dashboard.html}"

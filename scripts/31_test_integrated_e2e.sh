@@ -12,7 +12,7 @@
 #   scripts/06_transfer_delta_datapump.sh（②搬送+適用）
 
 set -uo pipefail
-ROOT="/home/ishihara1447/projects/data-transfer"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SRC="oracle-src"; TGT="oracle-tgt"
 RUN_NAME="delta_run_01"
 

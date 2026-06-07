@@ -12,7 +12,7 @@
 # 既定出力: out/migration_dashboard.html
 
 set -uo pipefail
-ROOT="/home/ishihara1447/projects/data-transfer"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SRC="oracle-src"; TGT="oracle-tgt"; RUN="delta_run_01"
 OUT="${1:-${ROOT}/out/migration_dashboard.html}"
 REFRESH="${2:-0}"   # >0 なら HTML に meta refresh を埋め込み自動更新

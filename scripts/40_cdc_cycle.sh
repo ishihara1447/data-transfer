@@ -11,7 +11,7 @@
 # 戻り値: 常に0（デーモンが落ちないよう個別失敗はサマリに記録）
 
 set -uo pipefail
-ROOT="/home/ishihara1447/projects/data-transfer"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SRC="oracle-src"; TGT="oracle-tgt"; RUN="delta_run_01"
 TS=$(date '+%H:%M:%S')
 

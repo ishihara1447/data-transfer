@@ -11,7 +11,7 @@
 # 停止: Ctrl-C もしくは max_iter 到達。
 
 set -uo pipefail
-ROOT="/home/ishihara1447/projects/data-transfer"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SRC="oracle-src"
 
 # ops_config から CDC 間隔を取得（引数優先・なければ設定値・最後に10秒）
