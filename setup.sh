@@ -213,8 +213,17 @@ SELECT COUNT(*) FROM src_schema.customers;
 EOF" 2>/dev/null | grep -oE '[0-9]+' | tail -1)
     [ "${n:-0}" -gt 0 ] 2>/dev/null && break || sleep 20
   done
-  echo "  初期ロードを実行…"
+  echo "  初期ロード（移行元1.0 → 移行先1.0）を実行…"
   bash "${ROOT}/scripts/30_initial_load_flashback.sh" || c_y "  初期ロードでエラー（ログ確認）"
+  # ★初期変換（移行先1.0 → 2.0）を全件で実行して TARGET を満たす。
+  #   これが無いと CDC デーモンの DELTA 変換は baseline 分を拾えず TARGET が空のままになる。
+  echo "  初期変換（移行先1.0 → 2.0・全件）を実行…"
+  docker exec -i -u oracle "${TGT}" bash -c "sqlplus -S '/ as sysdba' <<'EOF'
+ALTER SESSION SET CONTAINER = ${PDB};
+SET SERVEROUTPUT ON SIZE UNLIMITED FEEDBACK OFF
+BEGIN log_schema.pkg_transform.transform_all('INITIAL_LOAD','INITIAL',10000,'Y'); END;
+/
+EOF" 2>&1 | grep -iE 'status=|ORA-|変換' | head -3 || c_y "  初期変換でエラー（ログ確認）"
   echo "  CDCデーモン・ダッシュボードデーモンをバックグラウンド起動…"
   nohup bash "${ROOT}/scripts/41_cdc_daemon.sh"      >"${ROOT}/out/cdc_daemon.log" 2>&1 &
   nohup bash "${ROOT}/scripts/51_dashboard_daemon.sh">"${ROOT}/out/dashboard_daemon.log" 2>&1 &
