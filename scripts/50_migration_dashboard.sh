@@ -182,6 +182,18 @@ done < <(echo "${RUNLOG}")
 age_bar() { local s="${1:-0}"; [[ "$s" =~ ^[0-9]+$ ]] || s=0; local w=$((s>120?100:s*100/120)); echo "$w"; }
 TR_BARW=$(age_bar "${TR_AGE}")
 
+# ---- 適用REDOログ 確認ページ（直近7日）を生成し、日付ボタンを組み立てる ----
+REDO_DIR="$(dirname "${OUT}")/redo"
+REDO_BUTTONS=""
+if [ -f "${ROOT}/scripts/52_redo_log_view.sh" ]; then
+  REDO_DAYS=$(bash "${ROOT}/scripts/52_redo_log_view.sh" "${REDO_DIR}" 7 2000 2>/dev/null)
+  for d in ${REDO_DAYS}; do
+    REDO_BUTTONS+="<a class=\"neonbtn\" href=\"redo/redo_${d}.html\" target=\"_blank\">${d}</a>"
+  done
+  [ -n "${REDO_DAYS}" ] && REDO_BUTTONS+="<a class=\"neonbtn pink\" href=\"redo/index.html\" target=\"_blank\">日付一覧をすべて開く ▸</a>"
+fi
+[ -z "${REDO_BUTTONS}" ] && REDO_BUTTONS="<span class=\"muted\">直近7日に適用された変更はありません</span>"
+
 # ---- HTML 生成 ----
 cat > "${OUT}" <<HTML
 <!DOCTYPE html><html lang="ja"><head><meta charset="UTF-8">
@@ -189,24 +201,59 @@ cat > "${OUT}" <<HTML
 ${META_REFRESH}
 <title>移行状況ダッシュボード</title>
 <style>
- body{font-family:-apple-system,"Segoe UI","Noto Sans CJK JP","Noto Sans JP",Meiryo,sans-serif;margin:0;background:#0f172a;color:#e2e8f0}
- header{background:#1e293b;padding:16px 24px;border-bottom:2px solid #334155}
- h1{margin:0;font-size:20px} .sub{color:#94a3b8;font-size:13px;margin-top:4px}
+ :root{--cyan:#00eaff;--pink:#ff2a6d;--purple:#b14aed;--green:#39ff14;--yellow:#fde047}
+ *{box-sizing:border-box}
+ body{font-family:-apple-system,"Segoe UI","Noto Sans CJK JP","Noto Sans JP",Meiryo,sans-serif;margin:0;
+   color:#cde8ff;background:#06040f;
+   background-image:
+     radial-gradient(circle at 12% -10%,rgba(177,74,237,.22),transparent 42%),
+     radial-gradient(circle at 100% 0%,rgba(255,42,109,.16),transparent 40%),
+     linear-gradient(rgba(0,234,255,.045) 1px,transparent 1px),
+     linear-gradient(90deg,rgba(0,234,255,.045) 1px,transparent 1px);
+   background-size:auto,auto,32px 32px,32px 32px}
+ header{padding:18px 24px;border-bottom:1px solid rgba(0,234,255,.35);
+   background:linear-gradient(90deg,rgba(255,42,109,.12),rgba(177,74,237,.10),rgba(0,234,255,.08));
+   box-shadow:0 0 24px rgba(0,234,255,.15)}
+ h1{margin:0;font-size:21px;letter-spacing:.16em;color:#fff;text-transform:uppercase;
+   text-shadow:0 0 8px var(--cyan),0 0 18px rgba(0,234,255,.5)}
+ .sub{color:#8ea6d6;font-size:13px;margin-top:6px}
  .wrap{padding:20px 24px;max-width:1100px;margin:0 auto}
- h2{font-size:15px;color:#cbd5e1;border-left:4px solid #38bdf8;padding-left:10px;margin:26px 0 12px}
+ h2{font-size:14px;color:var(--cyan);border-left:3px solid var(--pink);padding:4px 0 4px 12px;margin:28px 0 12px;
+   letter-spacing:.08em;text-transform:uppercase;text-shadow:0 0 7px rgba(0,234,255,.45)}
  .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px}
- .card{background:#1e293b;border:1px solid #334155;border-radius:8px;padding:14px}
- .card .k{font-size:12px;color:#94a3b8} .card .v{font-size:22px;font-weight:700;margin-top:4px}
- .card .u{font-size:12px;color:#64748b;margin-left:4px}
- table{width:100%;border-collapse:collapse;background:#1e293b;border-radius:8px;overflow:hidden}
- th,td{padding:8px 12px;text-align:left;font-size:13px;border-bottom:1px solid #334155}
- th{background:#334155;color:#cbd5e1} td.num{text-align:right;font-variant-numeric:tabular-nums}
- .badge{font-weight:700;border-radius:4px;padding:2px 8px;font-size:12px}
- .ok{color:#bbf7d0;background:#14532d} .ng{color:#fecaca;background:#7f1d1d} .warn{color:#fde68a;background:#78350f}
- .status-big{display:inline-block;font-size:16px;font-weight:700;border-radius:6px;padding:6px 14px}
- .bar{height:8px;background:#334155;border-radius:4px;overflow:hidden;margin-top:6px}
- .bar>i{display:block;height:100%;background:#38bdf8}
- .muted{color:#64748b;font-size:12px}
+ .card{background:linear-gradient(160deg,rgba(20,12,40,.92),rgba(10,8,26,.92));
+   border:1px solid rgba(0,234,255,.28);border-radius:8px;padding:14px;
+   box-shadow:0 0 12px rgba(0,234,255,.08),inset 0 0 18px rgba(177,74,237,.06)}
+ .card .k{font-size:12px;color:#9fb6e6;letter-spacing:.02em}
+ .card .v{font-size:23px;font-weight:700;margin-top:6px;font-family:"Consolas","SFMono-Regular",monospace;
+   color:#eafcff;text-shadow:0 0 9px rgba(0,234,255,.55)}
+ .card .u{font-size:12px;color:#7c87b8;margin-left:5px}
+ table{width:100%;border-collapse:collapse;border-radius:8px;overflow:hidden;
+   border:1px solid rgba(0,234,255,.22);box-shadow:0 0 14px rgba(177,74,237,.10)}
+ th,td{padding:9px 12px;text-align:left;font-size:13px;border-bottom:1px solid rgba(0,234,255,.12)}
+ tr{background:rgba(12,9,28,.85)}
+ th{background:linear-gradient(90deg,rgba(255,42,109,.30),rgba(177,74,237,.24));color:#fff;
+   letter-spacing:.06em;text-transform:uppercase;font-size:12px}
+ td.num{text-align:right;font-variant-numeric:tabular-nums;font-family:"Consolas","SFMono-Regular",monospace}
+ .badge{font-weight:700;border-radius:4px;padding:2px 9px;font-size:12px;letter-spacing:.04em}
+ .ok{color:#001a06;background:var(--green);box-shadow:0 0 9px rgba(57,255,20,.6)}
+ .ng{color:#fff;background:var(--pink);box-shadow:0 0 9px rgba(255,42,109,.7)}
+ .warn{color:#1a1400;background:var(--yellow);box-shadow:0 0 9px rgba(253,224,71,.6)}
+ .status-big{display:inline-block;font-size:15px;font-weight:700;border-radius:6px;padding:5px 14px;letter-spacing:.05em}
+ .bar{height:8px;background:rgba(0,234,255,.12);border-radius:4px;overflow:hidden;margin-top:8px}
+ .bar>i{display:block;height:100%;background:linear-gradient(90deg,var(--cyan),var(--pink));
+   box-shadow:0 0 10px var(--cyan)}
+ .muted{color:#7c87b8;font-size:12px}
+ .btnrow{display:flex;flex-wrap:wrap;gap:10px;margin-top:4px}
+ .neonbtn{display:inline-block;text-decoration:none;font-size:13px;font-weight:700;letter-spacing:.05em;
+   padding:9px 16px;border-radius:6px;color:var(--cyan);border:1px solid var(--cyan);
+   background:rgba(0,234,255,.06);box-shadow:0 0 10px rgba(0,234,255,.25),inset 0 0 12px rgba(0,234,255,.08);
+   transition:.15s}
+ .neonbtn:hover{color:#06040f;background:var(--cyan);box-shadow:0 0 18px var(--cyan)}
+ .neonbtn.pink{color:var(--pink);border-color:var(--pink);background:rgba(255,42,109,.07);
+   box-shadow:0 0 10px rgba(255,42,109,.3)}
+ .neonbtn.pink:hover{color:#06040f;background:var(--pink);box-shadow:0 0 18px var(--pink)}
+ code{color:var(--pink);background:rgba(255,42,109,.08);padding:1px 5px;border-radius:3px}
 </style></head><body>
 <header><h1>データ移行 状況ダッシュボード</h1>
 <div class="sub">生成時刻: ${GEN_AT}　|　実行名: ${RUN}　|　連携処理の状態: <span class="status-big ${HEALTH_CLS}">${HEALTH}</span>　|　テーブル構成の凍結: <span class="status-big ${DDL_CLS}">${DDL_STATUS}</span>$([ "${REFRESH}" -gt 0 ] 2>/dev/null && echo "　|　自動更新 ${REFRESH}秒ごと")</div>
@@ -247,17 +294,22 @@ ${RUNLOG_ROWS}
 ${CATALOG_ROWS}
 </table>
 
-<h2>E. アーカイブログ / リドログ領域(FRA) の保持リスク（差分を読める期間・空き）</h2>
+<h2>E. アーカイブログ / リドログ領域(FRA) の保持リスク（過去の変更をさかのぼれる範囲・空き）</h2>
 <div class="cards">
- <div class="card"><div class="k">保持本数</div><div class="v">$(gv ARCH_COUNT)<span class="u">本</span></div></div>
- <div class="card"><div class="k">合計サイズ</div><div class="v">$(gv ARCH_MB)<span class="u">MB</span></div></div>
- <div class="card"><div class="k">保持日数 <span class="badge ${ARCH_CLS}">$(clslabel ${ARCH_CLS})</span></div><div class="v">$(gv ARCH_DAYS)<span class="u">日</span></div>
-   <div class="muted">警告:$(gv CFG_ARCH_WARN_DAYS)日 / 危険:$(gv CFG_ARCH_CRIT_DAYS)日 を下回ったら</div></div>
+ <div class="card"><div class="k">いま残っている変更履歴ファイル数</div><div class="v">$(gv ARCH_COUNT)<span class="u">本</span></div>
+   <div class="muted">削除されずに残っているアーカイブログ（変更履歴）の本数</div></div>
+ <div class="card"><div class="k">変更履歴の合計サイズ</div><div class="v">$(gv ARCH_MB)<span class="u">MB</span></div></div>
+ <div class="card"><div class="k">さかのぼれる期間 <span class="badge ${ARCH_CLS}">$(clslabel ${ARCH_CLS})</span></div><div class="v">$(gv ARCH_DAYS)<span class="u">日分</span></div>
+   <div class="muted">最古〜最新の履歴がカバーする日数。短いと差分の取りこぼしリスク（警告:$(gv CFG_ARCH_WARN_DAYS)日 / 危険:$(gv CFG_ARCH_CRIT_DAYS)日 未満）</div></div>
  <div class="card"><div class="k">リドログ領域(FRA)の使用率 <span class="badge ${FRA_CLS}">$(clslabel ${FRA_CLS})</span></div><div class="v">${FRA_PCT}<span class="u">%</span></div>
    <div class="muted">$([ "${FRA_PCT}" = "NA" ] && echo "FRA未設定" || echo "${FRA_USED}/${FRA_LIMIT} MB ｜ 警告:$(gv CFG_FRA_WARN)% / 危険:$(gv CFG_FRA_CRIT)%")</div></div>
  <div class="card"><div class="k">最古 → 最新</div><div class="v" style="font-size:14px">$(gs ARCH_OLDEST) → $(gs ARCH_NEWEST)</div></div>
 </div>
 <p class="muted" style="margin-top:8px">【設定】警告のしきい値・反映の間隔（$(gv CFG_INTERVAL)秒）・変換のまとめ件数（$(gv CFG_BATCH)件）は <code>scripts/61_ops_config.sh</code> で変更できます。</p>
+
+<h2>F. 適用した変更（REDO）ログの確認 — 直近7日</h2>
+<p class="muted" style="margin-top:-4px">日付ボタンを押すと、その日に移行先へ適用した変更（追加／更新／削除の SQL 全文）を別画面で開きます。画面内で絞り込み検索もできます。</p>
+<div class="btnrow">${REDO_BUTTONS}</div>
 
 <p class="muted" style="margin-top:30px">移行元1.0 現在番号=$(gs SRC_CURRENT_SCN) / 抽出済み=$(gs EXTRACT_SCN) / 移行先へ適用済み=$(gs APPLY_SCN) / 基準点(baseline)=$(gs BASELINE)　|　抽出の状態=$(gs EXTRACT_STATUS)（最終 $(gs EXTRACT_LASTRUN)）/ 適用の最終 $(gs APPLY_LASTRUN)</p>
 </div></body></html>
