@@ -291,29 +291,9 @@ CREATE TABLE log_schema.transform_state (
     CONSTRAINT pk_transform_state PRIMARY KEY (tgt_table_name)
 );
 
-INSERT INTO log_schema.transform_catalog
- (catalog_id, src_table_name, tgt_table_name, transform_class, proc_name, pk_columns, delete_src_table, sort_order, remarks)
-VALUES (log_schema.seq_catalog_id.NEXTVAL, 'REGIONS', 'REGIONS', 'PASS_THROUGH',
-        NULL, 'REGION_ID', 'REGIONS', 5, '1:1 コピー（汎用 PASS_THROUGH 経路）');
-INSERT INTO log_schema.transform_catalog
- (catalog_id, src_table_name, tgt_table_name, transform_class, proc_name, pk_columns, delete_src_table, sort_order, remarks)
-VALUES (log_schema.seq_catalog_id.NEXTVAL, 'CUSTOMERS', 'CUSTOMERS', 'LIGHT_TRANSFORM',
-        'TRANSFORM_CUSTOMERS', 'CUSTOMER_ID', 'CUSTOMERS', 10, '氏名連結・電話正規化・status→フラグ・TS→DATE');
-INSERT INTO log_schema.transform_catalog
- (catalog_id, src_table_name, tgt_table_name, transform_class, proc_name, pk_columns, delete_src_table, sort_order, remarks)
-VALUES (log_schema.seq_catalog_id.NEXTVAL, 'ORDERS', 'ORDERS', 'LIGHT_TRANSFORM',
-        'TRANSFORM_ORDERS', 'ORDER_ID', 'ORDERS', 20, 'status検証・派生 net_amount / lead_time_days');
--- ★HEAVY: orders+customers+regions の非正規化JOIN + shipping_address(JSON)分解 + status マッピング表
-INSERT INTO log_schema.transform_catalog
- (catalog_id, src_table_name, tgt_table_name, transform_class, proc_name, pk_columns, delete_src_table, sort_order, remarks)
-VALUES (log_schema.seq_catalog_id.NEXTVAL, 'ORDERS', 'ORDER_ENRICHED', 'HEAVY_TRANSFORM',
-        'TRANSFORM_ORDER_ENRICHED', 'ORDER_ID', 'ORDERS', 40,
-        'HEAVY: 非正規化JOIN(N→1) + JSON分解(REGEXP) + コードマッピング表');
-
-INSERT INTO log_schema.transform_state(tgt_table_name) VALUES ('REGIONS');
-INSERT INTO log_schema.transform_state(tgt_table_name) VALUES ('CUSTOMERS');
-INSERT INTO log_schema.transform_state(tgt_table_name) VALUES ('ORDERS');
-INSERT INTO log_schema.transform_state(tgt_table_name) VALUES ('ORDER_ENRICHED');
+-- ★transform_catalog / transform_state の投入は pkg_codegen が
+--   codegen_table_map（マッピング設定）を唯一の真実源として生成・MERGE する。
+--   ここでは空のまま（scripts/70 で生成→登録）。
 
 -- ============================================================
 -- code_mapping: データ駆動のコード値マッピング（HEAVY パターン例）

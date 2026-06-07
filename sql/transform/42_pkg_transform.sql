@@ -32,15 +32,8 @@ CREATE OR REPLACE PACKAGE log_schema.pkg_transform AS
         p_propagate_delete IN VARCHAR2 DEFAULT 'Y'   -- DELTA時に削除伝播するか
     );
 
-    -- LIGHT_TRANSFORM 専用（p_last/p_snap は DELTA の差分窓）
-    PROCEDURE transform_customers(p_run_id IN NUMBER, p_mode IN VARCHAR2,
-                                  p_last IN TIMESTAMP, p_snap IN TIMESTAMP);
-    PROCEDURE transform_orders(p_run_id IN NUMBER, p_mode IN VARCHAR2,
-                               p_last IN TIMESTAMP, p_snap IN TIMESTAMP);
-
-    -- HEAVY_TRANSFORM: 非正規化JOIN + JSON分解 + コードマッピング
-    PROCEDURE transform_order_enriched(p_run_id IN NUMBER, p_mode IN VARCHAR2,
-                                       p_last IN TIMESTAMP, p_snap IN TIMESTAMP);
+    -- ※ per-table 変換(transform_<tgt>)は pkg_transform_gen に生成される（pkg_codegen）。
+    --   transform_all は transform_catalog.proc_name を完全修飾名で動的呼び出しする。
 
     -- PASS_THROUGH 汎用（動的SQL）
     PROCEDURE transform_passthrough(p_run_id IN NUMBER, p_tgt_table IN VARCHAR2,
@@ -208,188 +201,6 @@ CREATE OR REPLACE PACKAGE BODY log_schema.pkg_transform AS
     END transform_passthrough;
 
     ------------------------------------------------------------------
-    -- customers 変換（LIGHT）
-    ------------------------------------------------------------------
-    PROCEDURE transform_customers(p_run_id IN NUMBER, p_mode IN VARCHAR2,
-                                  p_last IN TIMESTAMP, p_snap IN TIMESTAMP) IS
-        v_src NUMBER; v_tgt NUMBER;
-    BEGIN
-        SELECT COUNT(*) INTO v_src FROM staging_schema.customers;
-        log_step(p_run_id, 'TRANSFORM_CUSTOMERS', 'RUNNING', v_src, 0);
-
-        IF p_mode = C_MODE_INITIAL THEN
-            INSERT INTO target_schema.customers
-                (customer_id, customer_code, full_name, display_name, email,
-                 phone_normalized, region_id, credit_limit, status, is_active, created_date)
-            SELECT s.customer_id, s.customer_code,
-                   s.last_name || ' ' || s.first_name,
-                   COALESCE(s.company_name, s.last_name || ' ' || s.first_name),
-                   s.email,
-                   log_schema.pkg_transform_util.normalize_phone(s.phone),
-                   s.region_id, s.credit_limit, s.status,
-                   log_schema.pkg_transform_util.status_to_active_flag(s.status),
-                   CAST(s.created_at AS DATE)
-            FROM staging_schema.customers s;
-        ELSE
-            MERGE INTO target_schema.customers t
-            USING (
-                SELECT s.customer_id, s.customer_code,
-                       s.last_name || ' ' || s.first_name AS full_name,
-                       COALESCE(s.company_name, s.last_name || ' ' || s.first_name) AS display_name,
-                       s.email,
-                       log_schema.pkg_transform_util.normalize_phone(s.phone) AS phone_normalized,
-                       s.region_id, s.credit_limit, s.status,
-                       log_schema.pkg_transform_util.status_to_active_flag(s.status) AS is_active,
-                       CAST(s.created_at AS DATE) AS created_date
-                FROM staging_schema.customers s
-                WHERE NVL(s.updated_at, s.created_at) > p_last
-                  AND NVL(s.updated_at, s.created_at) <= p_snap
-            ) src
-            ON (t.customer_id = src.customer_id)
-            WHEN MATCHED THEN UPDATE SET
-                t.customer_code=src.customer_code, t.full_name=src.full_name,
-                t.display_name=src.display_name, t.email=src.email,
-                t.phone_normalized=src.phone_normalized, t.region_id=src.region_id,
-                t.credit_limit=src.credit_limit, t.status=src.status,
-                t.is_active=src.is_active, t.created_date=src.created_date
-            WHEN NOT MATCHED THEN INSERT
-                (customer_id, customer_code, full_name, display_name, email,
-                 phone_normalized, region_id, credit_limit, status, is_active, created_date)
-                VALUES (src.customer_id, src.customer_code, src.full_name, src.display_name,
-                        src.email, src.phone_normalized, src.region_id, src.credit_limit,
-                        src.status, src.is_active, src.created_date);
-        END IF;
-
-        SELECT COUNT(*) INTO v_tgt FROM target_schema.customers;
-        log_step(p_run_id, 'TRANSFORM_CUSTOMERS', 'SUCCESS', v_src, v_tgt);
-    END transform_customers;
-
-    ------------------------------------------------------------------
-    -- orders 変換（LIGHT）
-    ------------------------------------------------------------------
-    PROCEDURE transform_orders(p_run_id IN NUMBER, p_mode IN VARCHAR2,
-                               p_last IN TIMESTAMP, p_snap IN TIMESTAMP) IS
-        v_src NUMBER; v_tgt NUMBER;
-    BEGIN
-        SELECT COUNT(*) INTO v_src FROM staging_schema.orders;
-        log_step(p_run_id, 'TRANSFORM_ORDERS', 'RUNNING', v_src, 0);
-
-        IF p_mode = C_MODE_INITIAL THEN
-            INSERT INTO target_schema.orders
-                (order_id, order_no, customer_id, shipping_region_id, order_status,
-                 order_date, ship_date, delivery_date, lead_time_days,
-                 total_amount, tax_amount, net_amount)
-            SELECT s.order_id, s.order_no, s.customer_id, s.shipping_region_id,
-                   log_schema.pkg_transform_util.validate_order_status(s.status),
-                   s.order_date, s.ship_date, s.delivery_date,
-                   CASE WHEN s.delivery_date IS NOT NULL
-                        THEN TRUNC(s.delivery_date) - TRUNC(s.order_date) END,
-                   s.total_amount, s.tax_amount, s.total_amount - s.tax_amount
-            FROM staging_schema.orders s;
-        ELSE
-            MERGE INTO target_schema.orders t
-            USING (
-                SELECT s.order_id, s.order_no, s.customer_id, s.shipping_region_id,
-                       log_schema.pkg_transform_util.validate_order_status(s.status) AS order_status,
-                       s.order_date, s.ship_date, s.delivery_date,
-                       CASE WHEN s.delivery_date IS NOT NULL
-                            THEN TRUNC(s.delivery_date) - TRUNC(s.order_date) END AS lead_time_days,
-                       s.total_amount, s.tax_amount, s.total_amount - s.tax_amount AS net_amount
-                FROM staging_schema.orders s
-                WHERE NVL(s.updated_at, s.created_at) > p_last
-                  AND NVL(s.updated_at, s.created_at) <= p_snap
-            ) src
-            ON (t.order_id = src.order_id)
-            WHEN MATCHED THEN UPDATE SET
-                t.order_no=src.order_no, t.customer_id=src.customer_id,
-                t.shipping_region_id=src.shipping_region_id, t.order_status=src.order_status,
-                t.order_date=src.order_date, t.ship_date=src.ship_date,
-                t.delivery_date=src.delivery_date, t.lead_time_days=src.lead_time_days,
-                t.total_amount=src.total_amount, t.tax_amount=src.tax_amount, t.net_amount=src.net_amount
-            WHEN NOT MATCHED THEN INSERT
-                (order_id, order_no, customer_id, shipping_region_id, order_status,
-                 order_date, ship_date, delivery_date, lead_time_days,
-                 total_amount, tax_amount, net_amount)
-                VALUES (src.order_id, src.order_no, src.customer_id, src.shipping_region_id,
-                        src.order_status, src.order_date, src.ship_date, src.delivery_date,
-                        src.lead_time_days, src.total_amount, src.tax_amount, src.net_amount);
-        END IF;
-
-        SELECT COUNT(*) INTO v_tgt FROM target_schema.orders;
-        log_step(p_run_id, 'TRANSFORM_ORDERS', 'SUCCESS', v_src, v_tgt);
-    END transform_orders;
-
-    ------------------------------------------------------------------
-    -- order_enriched 変換（HEAVY: 非正規化JOIN + JSON分解 + コードマッピング）
-    --   設計指針(docs/phase2-heavy-transform-patterns.md): 影響キー(order_id)単位で
-    --   全体再計算し MERGE 洗い替え。JSONは 12c 互換のため REGEXP で解析。
-    --   注意: customers/regions/code_mapping 側のみ変更された場合の再計算は本PoC範囲外
-    --         （order の updated_at 窓で駆動。マスタ変更波及は設計doc 10章の課題）。
-    ------------------------------------------------------------------
-    PROCEDURE transform_order_enriched(p_run_id IN NUMBER, p_mode IN VARCHAR2,
-                                       p_last IN TIMESTAMP, p_snap IN TIMESTAMP) IS
-        v_src NUMBER; v_tgt NUMBER;
-    BEGIN
-        SELECT COUNT(*) INTO v_src FROM staging_schema.orders;
-        log_step(p_run_id, 'TRANSFORM_ORDER_ENRICHED', 'RUNNING', v_src, 0);
-
-        IF p_mode = C_MODE_INITIAL THEN
-            INSERT INTO target_schema.order_enriched
-                (order_id, order_no, customer_id, customer_name, shipping_region_id,
-                 region_name, order_status, status_label, postal_code, prefecture, city,
-                 total_amount, net_amount)
-            SELECT o.order_id, o.order_no, o.customer_id,
-                   c.last_name || ' ' || c.first_name,
-                   o.shipping_region_id, r.region_name,
-                   o.status, NVL(m.tgt_value, o.status),
-                   REGEXP_SUBSTR(DBMS_LOB.SUBSTR(o.shipping_address,2000,1),'"postal_code"[[:space:]]*:[[:space:]]*"([^"]*)"',1,1,NULL,1),
-                   REGEXP_SUBSTR(DBMS_LOB.SUBSTR(o.shipping_address,2000,1),'"prefecture"[[:space:]]*:[[:space:]]*"([^"]*)"',1,1,NULL,1),
-                   REGEXP_SUBSTR(DBMS_LOB.SUBSTR(o.shipping_address,2000,1),'"city"[[:space:]]*:[[:space:]]*"([^"]*)"',1,1,NULL,1),
-                   o.total_amount, o.total_amount - o.tax_amount
-            FROM staging_schema.orders o
-            LEFT JOIN staging_schema.customers c ON c.customer_id = o.customer_id
-            LEFT JOIN staging_schema.regions   r ON r.region_id   = o.shipping_region_id
-            LEFT JOIN log_schema.code_mapping  m ON m.code_type='ORDER_STATUS' AND m.src_code = o.status;
-        ELSE
-            MERGE INTO target_schema.order_enriched t
-            USING (
-                SELECT o.order_id, o.order_no, o.customer_id,
-                       c.last_name || ' ' || c.first_name AS customer_name,
-                       o.shipping_region_id, r.region_name,
-                       o.status AS order_status, NVL(m.tgt_value, o.status) AS status_label,
-                       REGEXP_SUBSTR(DBMS_LOB.SUBSTR(o.shipping_address,2000,1),'"postal_code"[[:space:]]*:[[:space:]]*"([^"]*)"',1,1,NULL,1) AS postal_code,
-                       REGEXP_SUBSTR(DBMS_LOB.SUBSTR(o.shipping_address,2000,1),'"prefecture"[[:space:]]*:[[:space:]]*"([^"]*)"',1,1,NULL,1) AS prefecture,
-                       REGEXP_SUBSTR(DBMS_LOB.SUBSTR(o.shipping_address,2000,1),'"city"[[:space:]]*:[[:space:]]*"([^"]*)"',1,1,NULL,1) AS city,
-                       o.total_amount, o.total_amount - o.tax_amount AS net_amount
-                FROM staging_schema.orders o
-                LEFT JOIN staging_schema.customers c ON c.customer_id = o.customer_id
-                LEFT JOIN staging_schema.regions   r ON r.region_id   = o.shipping_region_id
-                LEFT JOIN log_schema.code_mapping  m ON m.code_type='ORDER_STATUS' AND m.src_code = o.status
-                WHERE NVL(o.updated_at, o.created_at) > p_last
-                  AND NVL(o.updated_at, o.created_at) <= p_snap
-            ) src
-            ON (t.order_id = src.order_id)
-            WHEN MATCHED THEN UPDATE SET
-                t.order_no=src.order_no, t.customer_id=src.customer_id,
-                t.customer_name=src.customer_name, t.shipping_region_id=src.shipping_region_id,
-                t.region_name=src.region_name, t.order_status=src.order_status,
-                t.status_label=src.status_label, t.postal_code=src.postal_code,
-                t.prefecture=src.prefecture, t.city=src.city,
-                t.total_amount=src.total_amount, t.net_amount=src.net_amount
-            WHEN NOT MATCHED THEN INSERT
-                (order_id, order_no, customer_id, customer_name, shipping_region_id,
-                 region_name, order_status, status_label, postal_code, prefecture, city,
-                 total_amount, net_amount)
-                VALUES (src.order_id, src.order_no, src.customer_id, src.customer_name,
-                        src.shipping_region_id, src.region_name, src.order_status, src.status_label,
-                        src.postal_code, src.prefecture, src.city, src.total_amount, src.net_amount);
-        END IF;
-
-        SELECT COUNT(*) INTO v_tgt FROM target_schema.order_enriched;
-        log_step(p_run_id, 'TRANSFORM_ORDER_ENRICHED', 'SUCCESS', v_src, v_tgt);
-    END transform_order_enriched;
-
-    ------------------------------------------------------------------
     -- 削除伝播: STAGING に無い PK を TARGET から削除（DELTA時）
     ------------------------------------------------------------------
     PROCEDURE propagate_delete(p_run_id IN NUMBER, p_tgt_table IN VARCHAR2,
@@ -462,9 +273,10 @@ CREATE OR REPLACE PACKAGE BODY log_schema.pkg_transform AS
             IF c.transform_class = 'PASS_THROUGH' THEN
                 transform_passthrough(v_run_id, c.tgt_table_name, c.pk_columns, p_mode, v_last, v_snap);
             ELSIF c.proc_name IS NOT NULL THEN
+                -- proc_name は完全修飾名（例 LOG_SCHEMA.PKG_TRANSFORM_GEN.TRANSFORM_CUSTOMERS）
+                -- = pkg_codegen が生成した per-table 変換プロシージャ
                 EXECUTE IMMEDIATE
-                    'BEGIN log_schema.pkg_transform.' || c.proc_name ||
-                    '(:1, :2, :3, :4); END;'
+                    'BEGIN ' || c.proc_name || '(:1, :2, :3, :4); END;'
                     USING v_run_id, p_mode, v_last, v_snap;
             END IF;
             COMMIT;  -- 親→子のFK順を守ってテーブル単位で確定
