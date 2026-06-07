@@ -110,54 +110,75 @@ oracle-src: SYS.delta_extract（LogMiner / DICT_FROM_ONLINE_CATALOG）
 
 ## 初回セットアップ
 
-### 1. Oracle Container Registry にログイン
+### ⚡ クイックスタート（推奨：ほぼ自動）
 
+別マシン（社内 WSL2 等）への移植は **`git clone` してスクリプト1回**で完了する。
+IT 初心者向けの詳細な手順は [`SETUP_GUIDE.md`](SETUP_GUIDE.md) を参照。
+
+```bash
+# 0) 事前に1回だけ（自動化不可）：Oracle イメージ取得の許可
+docker login container-registry.oracle.com   # https://container-registry.oracle.com で規約同意
+
+# 1) 取得して構築（コンテナ起動 + 両DBのスキーマ/パッケージ/設定を自動デプロイ）
+git clone <repo-url> && cd data-transfer
+./setup.sh            # 標準構築（10〜15分）
+# ./setup.sh --full   # 初期ロード + CDC/ダッシュボード常駐まで自動
+# ./setup.sh --plan   # 何をするか確認だけ（実行しない）
+```
+
+`setup.sh` が自動で行うこと：前提確認 → `.env` 自動生成 → コンテナ起動・healthy 待機 →
+**正しい順序での全SQLデプロイ**（src: 10→11→13→14→30→31→34→35 / tgt: 20→32→40→41→42→33）→
+data-generator 起動。手作業は `docker login` と `git clone` のみ。
+
+---
+
+### 手動セットアップ（仕組みを理解したい場合）
+
+<details>
+<summary>クリックして展開</summary>
+
+#### 1. Oracle Container Registry にログイン
 ```bash
 docker login container-registry.oracle.com
 ```
-
 [Oracle Container Registry](https://container-registry.oracle.com) で利用規約に同意しておくこと。
 
-### 2. 環境変数ファイルの作成
-
+#### 2. 環境変数ファイルの作成
 ```bash
-cp .env.example .env
-# .env を編集してパスワードを設定
+cp .env.example .env   # 必要ならパスワードを編集
 ```
 
-### 3. コンテナ起動
-
+#### 3. コンテナ起動
 ```bash
 docker compose up -d
 docker compose ps   # 全コンテナが healthy になるまで待つ（3〜5 分）
 ```
 
-### 4. oracle-src のスキーマ構築
-
-```bash
-# oracle-src に接続して順番に実行
-docker exec -u oracle oracle-src bash
-
-# コンテナ内で
-sqlplus / as sysdba
-@/path/to/sql/cdc/10_cdc_create_users.sql    -- ユーザー作成
-@/path/to/sql/cdc/11_cdc_src_schema.sql      -- SRC_SCHEMA DDL
-@/path/to/sql/cdc/13_cdc_schema.sql          -- CDC_SCHEMA DDL
-@/path/to/sql/cdc/14_supplemental_logging.sql -- ARCHIVELOG + 補足ログ有効化
-@/path/to/sql/cdc/30_delta_queue_src.sql      -- delta_queue 作成
-@/path/to/sql/cdc/31_pkg_delta_extract_src.sql -- SYS.delta_extract 作成
+#### 4. oracle-src のスキーマ構築（順序が重要）
+```
+sql/cdc/10_cdc_create_users.sql        ユーザー作成（&&パスワードは .env 値を DEFINE）
+sql/cdc/11_cdc_src_schema.sql          SRC_SCHEMA DDL
+sql/cdc/13_cdc_schema.sql              CDC_SCHEMA DDL
+sql/cdc/14_supplemental_logging.sql    ARCHIVELOG + 補足ログ（DB再起動を伴う）
+sql/cdc/30_delta_queue_src.sql         delta_queue
+sql/cdc/31_pkg_delta_extract_src.sql   SYS.delta_extract
+sql/cdc/34_cdc_table_catalog.sql       追跡対象カタログ
+sql/cdc/35_ops_config_src.sql          運用パラメータ ops_config
 ```
 
-### 5. oracle-tgt のスキーマ構築
-
-```bash
-docker exec -u oracle oracle-tgt bash
-sqlplus / as sysdba
-@/path/to/sql/cdc/10b_cdc_create_users_tgt.sql -- TGT ユーザー作成
-@/path/to/sql/cdc/12_cdc_tgt_schema.sql         -- STAGING_SCHEMA DDL
-@/path/to/sql/cdc/32_delta_queue_tgt.sql         -- staging_ctl + delta_queue 作成
-@/path/to/sql/cdc/33_pkg_delta_apply_tgt.sql     -- SYS.delta_apply 作成
+#### 5. oracle-tgt のスキーマ構築（順序が重要）
 ```
+sql/cdc/20_staging_users_tgt.sql       STAGING_SCHEMA ユーザー
+sql/cdc/32_delta_queue_tgt.sql         staging_ctl + delta_queue + apply_ledger
+sql/transform/40_phase2_setup_tgt.sql  TARGET/LOG ユーザー + 各表 + 変換カタログ
+sql/transform/41_pkg_transform_util.sql 共有変換関数
+sql/transform/42_pkg_transform.sql     変換オーケストレータ
+sql/cdc/33_pkg_delta_apply_tgt.sql     SYS.delta_apply
+```
+
+各ファイルは `CONNECT / AS SYSDBA` を内蔵。`docker exec -i -u oracle <container> sqlplus -S /nolog < file`
+で流し込める（`&&` 置換変数を使うファイルは事前に `DEFINE` が必要 → `setup.sh` が自動注入）。
+</details>
 
 ---
 

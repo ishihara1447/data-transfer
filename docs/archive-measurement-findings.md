@@ -71,6 +71,11 @@
 
 ---
 
+> **運用制御**: archive保持日数・FRA使用率の警告閾値、および FRA 上限
+> （`db_recovery_file_dest_size`）・`undo_retention` の目標値は、運用者が
+> `scripts/61_ops_config.sh` で変更でき、ダッシュボードが閾値超過を色で警告する。
+> 設計は [ops-config-design.md](ops-config-design.md) を参照。
+
 ## 4. 残作業（このテーマ）
 
 - [ ] archive 連番欠落チェックの自動化（日次 `sequence#` 連続性検査）

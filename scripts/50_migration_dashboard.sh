@@ -42,6 +42,19 @@ SELECT 'SRC_ORDERS='||COUNT(*) FROM src_schema.orders;
 SELECT 'DDL_VIOLATIONS='||COUNT(*) FROM cdc_schema.cdc_table_catalog c
  JOIN dba_objects o ON o.owner='SRC_SCHEMA' AND o.object_type='TABLE' AND o.object_name=c.table_name
  WHERE c.is_active='Y' AND (c.baseline_ddl_time IS NULL OR o.last_ddl_time > c.baseline_ddl_time);
+-- 運用閾値（ops_config）：警告色の判定に使用
+SELECT 'CFG_TR_AGE_WARN='||param_value     FROM cdc_schema.ops_config WHERE param_key='transform_age_warn_sec';
+SELECT 'CFG_TR_AGE_CRIT='||param_value     FROM cdc_schema.ops_config WHERE param_key='transform_age_crit_sec';
+SELECT 'CFG_PENDING_WARN='||param_value    FROM cdc_schema.ops_config WHERE param_key='pending_xfer_warn';
+SELECT 'CFG_ARCH_WARN_DAYS='||param_value  FROM cdc_schema.ops_config WHERE param_key='arch_retention_warn_days';
+SELECT 'CFG_ARCH_CRIT_DAYS='||param_value  FROM cdc_schema.ops_config WHERE param_key='arch_retention_crit_days';
+SELECT 'CFG_FRA_WARN='||param_value        FROM cdc_schema.ops_config WHERE param_key='fra_warn_pct';
+SELECT 'CFG_FRA_CRIT='||param_value        FROM cdc_schema.ops_config WHERE param_key='fra_crit_pct';
+SELECT 'CFG_INTERVAL='||param_value        FROM cdc_schema.ops_config WHERE param_key='cdc_interval_sec';
+SELECT 'CFG_BATCH='||param_value           FROM cdc_schema.ops_config WHERE param_key='transform_batch_rows';
+-- FRA(リドログ/アーカイブ領域)使用率
+SELECT 'FRA_LIMIT_MB='||ROUND(NVL(space_limit,0)/1024/1024,1) FROM v\$recovery_file_dest WHERE rownum=1;
+SELECT 'FRA_USED_MB='||ROUND(NVL(space_used,0)/1024/1024,1)   FROM v\$recovery_file_dest WHERE rownum=1;
 EXIT;
 EOF" 2>/dev/null)
 
@@ -88,6 +101,27 @@ EXTRACT_LAG=$(idiff SRC_CURRENT_SCN EXTRACT_SCN)
 APPLY_LAG=$(idiff EXTRACT_SCN APPLY_SCN)
 PENDING_XFER=$(idiff SRC_DELTA_MAX TGT_DELTA_MAX)
 TR_AGE=$(gv TRANSFORM_AGE_SEC)
+
+# ---- 閾値判定（ops_config 由来）----
+# fcls: 値を warn/crit と比較し ok/warn/ng/muted を返す（float対応・awk）
+#   direction=high → 大きいほど悪い（鮮度・未搬送）/ low → 小さいほど悪い（保持日数）
+fcls() { awk -v v="$1" -v w="$2" -v c="$3" -v d="$4" 'BEGIN{
+  if(v==""||v=="-"||w==""||c==""){print "muted"; exit}
+  if(d=="high"){ if(v+0>=c+0)print"ng"; else if(v+0>=w+0)print"warn"; else print"ok" }
+  else        { if(v+0<=c+0)print"ng"; else if(v+0<=w+0)print"warn"; else print"ok" }
+}'; }
+
+# FRA 使用率（%）。limit<=0（FRA未構成）は NA
+FRA_LIMIT=$(gv FRA_LIMIT_MB); FRA_USED=$(gv FRA_USED_MB)
+FRA_PCT=$(awk -v u="${FRA_USED:-0}" -v l="${FRA_LIMIT:-0}" 'BEGIN{ if(l+0<=0){print "NA"} else {printf "%.1f", u/l*100} }')
+
+# 各カードの状態クラス
+TR_AGE_CLS=$(fcls "${TR_AGE}"    "$(gv CFG_TR_AGE_WARN)"  "$(gv CFG_TR_AGE_CRIT)" high)
+PENDING_CLS=$(fcls "${PENDING_XFER}" "$(gv CFG_PENDING_WARN)" "$(gv CFG_PENDING_WARN)" high)
+ARCH_CLS=$(fcls "$(gv ARCH_DAYS)" "$(gv CFG_ARCH_WARN_DAYS)" "$(gv CFG_ARCH_CRIT_DAYS)" low)
+if [ "${FRA_PCT}" = "NA" ]; then FRA_CLS="muted"; else FRA_CLS=$(fcls "${FRA_PCT}" "$(gv CFG_FRA_WARN)" "$(gv CFG_FRA_CRIT)" high); fi
+# クラス→日本語ラベル
+clslabel() { case "$1" in ok) echo "正常";; warn) echo "警告";; ng) echo "危険";; *) echo "—";; esac; }
 
 # 健全性判定（DDL違反も含める）
 APPLY_FAILED=$(gv APPLY_FAILED); LEDGER_FAILED=$(gv LEDGER_FAILED); ERROR_COUNT=$(gv ERROR_COUNT)
@@ -171,10 +205,11 @@ ${META_REFRESH}
 <div class="cards">
  <div class="card"><div class="k">抽出ラグ (SRC最新SCN − 抽出済)</div><div class="v">${EXTRACT_LAG}<span class="u">SCN</span></div></div>
  <div class="card"><div class="k">適用ラグ (抽出済 − 適用済SCN)</div><div class="v">${APPLY_LAG}<span class="u">SCN</span></div></div>
- <div class="card"><div class="k">未搬送 delta (src − tgt delta_id)</div><div class="v">${PENDING_XFER}<span class="u">件</span></div></div>
- <div class="card"><div class="k">TARGET 鮮度 (最終変換からの経過)</div><div class="v">${TR_AGE}<span class="u">秒</span></div>
+ <div class="card"><div class="k">未搬送 delta (src − tgt delta_id) <span class="badge ${PENDING_CLS}">$(clslabel ${PENDING_CLS})</span></div><div class="v">${PENDING_XFER}<span class="u">件</span></div>
+   <div class="muted">警告閾値: $(gv CFG_PENDING_WARN) 件</div></div>
+ <div class="card"><div class="k">TARGET 鮮度 (最終変換からの経過) <span class="badge ${TR_AGE_CLS}">$(clslabel ${TR_AGE_CLS})</span></div><div class="v">${TR_AGE}<span class="u">秒</span></div>
    <div class="bar"><i style="width:${TR_BARW}%"></i></div>
-   <div class="muted">最終変換: $(gs TRANSFORM_MIN_AT)</div></div>
+   <div class="muted">最終変換: $(gs TRANSFORM_MIN_AT) ｜ 閾値 警告:$(gv CFG_TR_AGE_WARN)s / 危険:$(gv CFG_TR_AGE_CRIT)s</div></div>
 </div>
 
 <h2>B. 件数照合（★移行判断基準: SRC = STAGING = TARGET）</h2>
@@ -200,13 +235,17 @@ ${RUNLOG_ROWS}
 ${CATALOG_ROWS}
 </table>
 
-<h2>E. archive log 保持リスク（差分が読める期間）</h2>
+<h2>E. archive log / FRA 保持リスク（差分が読める期間・領域余裕）</h2>
 <div class="cards">
  <div class="card"><div class="k">保持本数</div><div class="v">$(gv ARCH_COUNT)</div></div>
  <div class="card"><div class="k">総量</div><div class="v">$(gv ARCH_MB)<span class="u">MB</span></div></div>
- <div class="card"><div class="k">保持期間</div><div class="v">$(gv ARCH_DAYS)<span class="u">日</span></div></div>
+ <div class="card"><div class="k">保持期間 <span class="badge ${ARCH_CLS}">$(clslabel ${ARCH_CLS})</span></div><div class="v">$(gv ARCH_DAYS)<span class="u">日</span></div>
+   <div class="muted">閾値 警告:$(gv CFG_ARCH_WARN_DAYS)日 / 危険:$(gv CFG_ARCH_CRIT_DAYS)日 未満</div></div>
+ <div class="card"><div class="k">FRA使用率 <span class="badge ${FRA_CLS}">$(clslabel ${FRA_CLS})</span></div><div class="v">${FRA_PCT}<span class="u">%</span></div>
+   <div class="muted">$([ "${FRA_PCT}" = "NA" ] && echo "FRA未構成" || echo "${FRA_USED}/${FRA_LIMIT} MB ｜ 閾値 警告:$(gv CFG_FRA_WARN)% / 危険:$(gv CFG_FRA_CRIT)%")</div></div>
  <div class="card"><div class="k">最古 → 最新</div><div class="v" style="font-size:14px">$(gs ARCH_OLDEST) → $(gs ARCH_NEWEST)</div></div>
 </div>
+<p class="muted" style="margin-top:8px">⚙ 運用閾値・CDC間隔($(gv CFG_INTERVAL)s)・変換バッチ($(gv CFG_BATCH)行)は <code>scripts/61_ops_config.sh</code> で変更可能（ops_config）。SRC_SYSTEM値は <code>apply</code> でDB反映。</p>
 
 <p class="muted" style="margin-top:30px">SRC現在SCN=$(gs SRC_CURRENT_SCN) / 抽出済=$(gs EXTRACT_SCN) / 適用済=$(gs APPLY_SCN) / baseline=$(gs BASELINE)　|　抽出状態=$(gs EXTRACT_STATUS) (最終 $(gs EXTRACT_LASTRUN)) / 適用最終 $(gs APPLY_LASTRUN)</p>
 </div></body></html>

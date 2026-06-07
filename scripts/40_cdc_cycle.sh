@@ -17,6 +17,20 @@ TS=$(date '+%H:%M:%S')
 
 num() { grep -oE '[0-9]+' | tail -1; }
 
+# ops_config から1キーの値を取得（既定値はフォールバック）
+cfg() { # key fallback
+  local v
+  v=$(docker exec -u oracle ${SRC} bash -c "sqlplus -S '/ as sysdba' <<'EOF'
+SET PAGESIZE 0 FEEDBACK OFF HEADING OFF TRIMSPOOL ON
+ALTER SESSION SET CONTAINER = XEPDB1;
+SELECT param_value FROM cdc_schema.ops_config WHERE param_key='$1';
+EOF" 2>/dev/null | num)
+  echo "${v:-$2}"
+}
+
+# 変換バッチ行数（ops_config: transform_batch_rows）
+BATCH=$(cfg transform_batch_rows 10000)
+
 # ---- 1. delta_extract（src・オンラインREDO採掘）----
 EX=$(docker exec -u oracle ${SRC} bash -c "sqlplus -S '/ as sysdba' <<'EOF'
 SET SERVEROUTPUT ON SIZE UNLIMITED FEEDBACK OFF ECHO OFF
@@ -50,9 +64,9 @@ fi
 TR=$(docker exec -u oracle ${TGT} bash -c "sqlplus -S '/ as sysdba' <<'EOF'
 ALTER SESSION SET CONTAINER = XEPDB1;
 SET SERVEROUTPUT ON SIZE UNLIMITED FEEDBACK OFF ECHO OFF
-BEGIN log_schema.pkg_transform.transform_all('CDC_DELTA_${RANDOM}','DELTA',10000,'Y'); END;
+BEGIN log_schema.pkg_transform.transform_all('CDC_DELTA_${RANDOM}','DELTA',${BATCH},'Y'); END;
 /
 EOF" 2>&1 | grep -oE 'status=SUCCESS|FAILED|ORA-[0-9]+' | head -1)
 TR=${TR:-NONE}
 
-echo "[${TS}] extracted=${EX} pending=$((SRCMAX-TGTMAX)) applied_rows=${APPLIED} transform=${TR}"
+echo "[${TS}] extracted=${EX} pending=$((SRCMAX-TGTMAX)) applied_rows=${APPLIED} transform=${TR} batch=${BATCH}"
