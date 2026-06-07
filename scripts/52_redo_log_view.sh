@@ -29,33 +29,31 @@ EOF" 2>/dev/null
 # 共通CSS（ダッシュボードと統一したサイバーパンク）
 read -r -d '' CSS <<'CSS' || true
 <style>
- /* 落ち着いたサイバーパンク（ダッシュボードと統一） */
- :root{--cyan:#79c0cf;--pink:#cf86a4;--purple:#9183c0;--green:#73c79a;--yellow:#cfb978}
+ /* シンプルなサイバー系：黒青ベース＋緑アクセント（ダッシュボードと統一） */
+ :root{--bg:#0a0f17;--panel:#101826;--line:rgba(120,160,200,.14);
+   --green:#3fd17a;--green-dim:#2fae64;--text:#c4cedd;--muted:#6f7c8f;--warn:#d6a429;--ng:#e0584f}
  *{box-sizing:border-box}
  body{font-family:-apple-system,"Segoe UI","Noto Sans CJK JP","Noto Sans JP",Meiryo,sans-serif;margin:0;
-   color:#c2ccdf;background:#11141d;
-   background-image:radial-gradient(circle at 10% -12%,rgba(145,131,192,.12),transparent 45%),
-     linear-gradient(rgba(121,192,207,.025) 1px,transparent 1px),
-     linear-gradient(90deg,rgba(121,192,207,.025) 1px,transparent 1px);
-   background-size:auto,34px 34px,34px 34px}
+   color:var(--text);background:var(--bg);
+   background-image:linear-gradient(rgba(120,160,200,.035) 1px,transparent 1px),
+     linear-gradient(90deg,rgba(120,160,200,.035) 1px,transparent 1px);
+   background-size:36px 36px}
  .wrap{padding:20px 24px;max-width:1280px;margin:0 auto}
- h1{font-size:19px;letter-spacing:.08em;color:#e6edf7;text-shadow:0 0 6px rgba(121,192,207,.25)}
- .muted{color:#7b86a0;font-size:12px}
- table{width:100%;border-collapse:collapse;border-radius:8px;overflow:hidden;
-   border:1px solid rgba(121,192,207,.14);margin-top:10px}
- th,td{padding:7px 10px;text-align:left;font-size:12px;border-bottom:1px solid rgba(121,192,207,.09);vertical-align:top}
- tr{background:#171b27}
- th{background:linear-gradient(90deg,rgba(207,134,164,.16),rgba(145,131,192,.14));color:#dfe6f2;
-   letter-spacing:.04em;position:sticky;top:0}
+ h1{font-size:18px;letter-spacing:.08em;color:#e6edf7;border-left:3px solid var(--green);padding-left:12px}
+ .muted{color:var(--muted);font-size:12px}
+ table{width:100%;border-collapse:collapse;border-radius:6px;overflow:hidden;border:1px solid var(--line);margin-top:10px}
+ th,td{padding:7px 10px;text-align:left;font-size:12px;border-bottom:1px solid var(--line);vertical-align:top}
+ tr{background:#0f1622}
+ th{background:#16202e;color:#aebccd;letter-spacing:.05em;text-transform:uppercase;position:sticky;top:0;
+   border-bottom:1px solid rgba(63,209,122,.35)}
  td.num{text-align:right;font-variant-numeric:tabular-nums;font-family:"Consolas",monospace}
- td.sql{font-family:"Consolas","SFMono-Regular",monospace;color:#a9c6cf;white-space:pre-wrap;word-break:break-all;max-width:680px}
- .op{font-weight:700;border-radius:4px;padding:1px 7px;font-size:11px}
- .ins{color:#0d2419;background:var(--green)} .upd{color:#2a2207;background:var(--yellow)} .del{color:#2a0d16;background:var(--pink)}
+ td.sql{font-family:"Consolas","SFMono-Regular",monospace;color:#9fb3c4;white-space:pre-wrap;word-break:break-all;max-width:680px}
+ .op{font-weight:700;border-radius:3px;padding:1px 7px;font-size:11px}
+ .ins{color:#06210f;background:var(--green)} .upd{color:#241b04;background:var(--warn)} .del{color:#fff;background:var(--ng)}
  .neonbtn{display:inline-block;text-decoration:none;font-size:13px;font-weight:700;letter-spacing:.03em;
-   padding:8px 14px;border-radius:6px;color:#9fd0da;border:1px solid rgba(121,192,207,.55);
-   background:rgba(121,192,207,.05)}
- .neonbtn.pink{color:#d9a3b8;border-color:rgba(207,134,164,.55);background:rgba(207,134,164,.05)}
- #flt{background:#1a1f2c;border:1px solid rgba(121,192,207,.5);color:#dde6f4;border-radius:6px;
+   padding:8px 14px;border-radius:5px;color:var(--green);border:1px solid var(--green-dim);background:rgba(63,209,122,.07)}
+ .neonbtn.pink{color:#aebccd;border-color:var(--line);background:#16202e}
+ #flt{background:#0f1622;border:1px solid var(--green-dim);color:#e3eaf4;border-radius:5px;
    padding:8px 12px;font-size:13px;width:340px;margin-top:8px}
 </style>
 <script>

@@ -201,56 +201,50 @@ cat > "${OUT}" <<HTML
 ${META_REFRESH}
 <title>移行状況ダッシュボード</title>
 <style>
- /* 落ち着いたサイバーパンク（彩度・発光ひかえめ／目に優しい） */
- :root{--cyan:#79c0cf;--pink:#cf86a4;--purple:#9183c0;--green:#73c79a;--yellow:#cfb978}
+ /* シンプルなサイバー系：黒青ベース＋緑アクセント（ネオン/グロー・赤紫なし） */
+ :root{--bg:#0a0f17;--panel:#101826;--line:rgba(120,160,200,.14);
+   --green:#3fd17a;--green-dim:#2fae64;--text:#c4cedd;--muted:#6f7c8f;
+   --ok:#3fd17a;--warn:#d6a429;--ng:#e0584f}
  *{box-sizing:border-box}
  body{font-family:-apple-system,"Segoe UI","Noto Sans CJK JP","Noto Sans JP",Meiryo,sans-serif;margin:0;
-   color:#c2ccdf;background:#11141d;
-   background-image:
-     radial-gradient(circle at 14% -12%,rgba(145,131,192,.12),transparent 45%),
-     radial-gradient(circle at 100% 0%,rgba(207,134,164,.08),transparent 42%),
-     linear-gradient(rgba(121,192,207,.025) 1px,transparent 1px),
-     linear-gradient(90deg,rgba(121,192,207,.025) 1px,transparent 1px);
-   background-size:auto,auto,34px 34px,34px 34px}
- header{padding:18px 24px;border-bottom:1px solid rgba(121,192,207,.22);
-   background:linear-gradient(90deg,rgba(207,134,164,.07),rgba(145,131,192,.06),rgba(121,192,207,.05))}
- h1{margin:0;font-size:21px;letter-spacing:.12em;color:#e6edf7;
-   text-shadow:0 0 6px rgba(121,192,207,.25)}
- .sub{color:#8a96b2;font-size:13px;margin-top:6px}
+   color:var(--text);background:var(--bg);
+   background-image:linear-gradient(rgba(120,160,200,.035) 1px,transparent 1px),
+     linear-gradient(90deg,rgba(120,160,200,.035) 1px,transparent 1px);
+   background-size:36px 36px}
+ header{padding:18px 24px;border-bottom:1px solid var(--line);background:#0c121c}
+ h1{margin:0;font-size:20px;letter-spacing:.10em;color:#e6edf7;
+   border-left:3px solid var(--green);padding-left:12px}
+ .sub{color:var(--muted);font-size:13px;margin-top:6px}
  .wrap{padding:20px 24px;max-width:1100px;margin:0 auto}
- h2{font-size:14px;color:#9fd0da;border-left:3px solid var(--pink);padding:4px 0 4px 12px;margin:28px 0 12px;
-   letter-spacing:.05em}
+ h2{font-size:13px;color:var(--green);border-left:3px solid var(--green);padding:3px 0 3px 12px;margin:28px 0 12px;
+   letter-spacing:.10em;text-transform:uppercase}
  .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px}
- .card{background:#191d2a;
-   border:1px solid rgba(121,192,207,.16);border-radius:8px;padding:14px;
-   box-shadow:0 1px 3px rgba(0,0,0,.3)}
- .card .k{font-size:12px;color:#97a3bf;letter-spacing:.02em}
- .card .v{font-size:23px;font-weight:700;margin-top:6px;font-family:"Consolas","SFMono-Regular",monospace;
-   color:#dde6f4}
- .card .u{font-size:12px;color:#7b86a0;margin-left:5px}
- table{width:100%;border-collapse:collapse;border-radius:8px;overflow:hidden;
-   border:1px solid rgba(121,192,207,.14)}
- th,td{padding:9px 12px;text-align:left;font-size:13px;border-bottom:1px solid rgba(121,192,207,.09)}
- tr{background:#171b27}
- th{background:linear-gradient(90deg,rgba(207,134,164,.16),rgba(145,131,192,.14));color:#dfe6f2;
-   letter-spacing:.04em;font-size:12px}
+ .card{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:14px}
+ .card .k{font-size:12px;color:#8a97ac;letter-spacing:.02em}
+ .card .v{font-size:23px;font-weight:700;margin-top:6px;font-family:"Consolas","SFMono-Regular",monospace;color:#e3eaf4}
+ .card .u{font-size:12px;color:var(--muted);margin-left:5px}
+ table{width:100%;border-collapse:collapse;border-radius:6px;overflow:hidden;border:1px solid var(--line)}
+ th,td{padding:9px 12px;text-align:left;font-size:13px;border-bottom:1px solid var(--line)}
+ tr{background:#0f1622}
+ th{background:#16202e;color:#aebccd;letter-spacing:.06em;text-transform:uppercase;font-size:12px;
+   border-bottom:1px solid rgba(63,209,122,.35)}
  td.num{text-align:right;font-variant-numeric:tabular-nums;font-family:"Consolas","SFMono-Regular",monospace}
- .badge{font-weight:700;border-radius:4px;padding:2px 9px;font-size:12px;letter-spacing:.03em}
- .ok{color:#0d2419;background:var(--green)}
- .ng{color:#2a0d16;background:var(--pink)}
- .warn{color:#2a2207;background:var(--yellow)}
- .status-big{display:inline-block;font-size:15px;font-weight:700;border-radius:6px;padding:5px 14px;letter-spacing:.03em}
- .bar{height:8px;background:rgba(121,192,207,.10);border-radius:4px;overflow:hidden;margin-top:8px}
- .bar>i{display:block;height:100%;background:linear-gradient(90deg,var(--cyan),var(--purple))}
- .muted{color:#7b86a0;font-size:12px}
+ .badge{font-weight:700;border-radius:3px;padding:2px 9px;font-size:12px;letter-spacing:.03em}
+ .ok{color:#06210f;background:var(--ok)}
+ .ng{color:#fff;background:var(--ng)}
+ .warn{color:#241b04;background:var(--warn)}
+ .status-big{display:inline-block;font-size:15px;font-weight:700;border-radius:5px;padding:5px 14px;letter-spacing:.03em}
+ .bar{height:8px;background:rgba(120,160,200,.12);border-radius:3px;overflow:hidden;margin-top:8px}
+ .bar>i{display:block;height:100%;background:var(--green)}
+ .muted{color:var(--muted);font-size:12px}
  .btnrow{display:flex;flex-wrap:wrap;gap:10px;margin-top:4px}
  .neonbtn{display:inline-block;text-decoration:none;font-size:13px;font-weight:700;letter-spacing:.03em;
-   padding:9px 16px;border-radius:6px;color:#9fd0da;border:1px solid rgba(121,192,207,.55);
-   background:rgba(121,192,207,.05);transition:.15s}
- .neonbtn:hover{color:#11141d;background:var(--cyan)}
- .neonbtn.pink{color:#d9a3b8;border-color:rgba(207,134,164,.55);background:rgba(207,134,164,.05)}
- .neonbtn.pink:hover{color:#11141d;background:var(--pink)}
- code{color:#d9a3b8;background:rgba(207,134,164,.08);padding:1px 5px;border-radius:3px}
+   padding:9px 16px;border-radius:5px;color:var(--green);border:1px solid var(--green-dim);
+   background:rgba(63,209,122,.07);transition:.15s}
+ .neonbtn:hover{color:#06210f;background:var(--green)}
+ .neonbtn.pink{color:#aebccd;border-color:var(--line);background:#16202e}
+ .neonbtn.pink:hover{color:#06210f;background:var(--green);border-color:var(--green)}
+ code{color:var(--green);background:rgba(63,209,122,.08);padding:1px 5px;border-radius:3px}
 </style></head><body>
 <header><h1>データ移行 状況ダッシュボード</h1>
 <div class="sub">生成時刻: ${GEN_AT}　|　実行名: ${RUN}　|　連携処理の状態: <span class="status-big ${HEALTH_CLS}">${HEALTH}</span>　|　テーブル構成の凍結: <span class="status-big ${DDL_CLS}">${DDL_STATUS}</span>$([ "${REFRESH}" -gt 0 ] 2>/dev/null && echo "　|　自動更新 ${REFRESH}秒ごと")</div>
