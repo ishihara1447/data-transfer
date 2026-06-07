@@ -123,6 +123,17 @@ if [ "${FRA_PCT}" = "NA" ]; then FRA_CLS="muted"; else FRA_CLS=$(fcls "${FRA_PCT
 # クラス→日本語ラベル
 clslabel() { case "$1" in ok) echo "正常";; warn) echo "警告";; ng) echo "危険";; *) echo "—";; esac; }
 
+# 技術名 → IT初心者向けの日本語名
+jp_table() { case "${1^^}" in
+  REGIONS) echo "地域";; CUSTOMERS) echo "顧客";; ORDERS) echo "注文";;
+  ORDER_ENRICHED) echo "注文（拡張）";; SYSTEM_EVENTS) echo "システムイベント";;
+  *) echo "$1";; esac; }
+jp_class() { case "$1" in
+  PASS_THROUGH) echo "そのままコピー";; LIGHT_TRANSFORM) echo "軽い変換";;
+  HEAVY_TRANSFORM) echo "重い変換";; *) echo "$1";; esac; }
+jp_mode()  { case "$1" in INITIAL) echo "全件";; DELTA) echo "差分";; *) echo "${1:--}";; esac; }
+jp_stat()  { case "$1" in SUCCESS) echo "成功";; FAILED) echo "失敗";; RUNNING) echo "実行中";; *) echo "${1:--}";; esac; }
+
 # 健全性判定（DDL違反も含める）
 APPLY_FAILED=$(gv APPLY_FAILED); LEDGER_FAILED=$(gv LEDGER_FAILED); ERROR_COUNT=$(gv ERROR_COUNT)
 DDL_VIOL=$(gv DDL_VIOLATIONS)
@@ -140,31 +151,31 @@ recon_row() {  # label src stg tgt
   if [ "$s" = "$g" ] && [ "$g" = "$t" ]; then cls="ok"; badge="一致"; else cls="ng"; badge="不一致"; fi
   echo "<tr><td>${label}</td><td class=num>${s}</td><td class=num>${g}</td><td class=num>${t}</td><td class=\"badge ${cls}\">${badge}</td></tr>"
 }
-# 派生表（order_enriched は orders 件数と比較）
+# 派生表（注文（拡張）は 注文 件数と比較）
 recon_derived() { # label tgt expect
   local label="$1" t="$2" e="$3" cls badge
   if [ "$t" = "$e" ]; then cls="ok"; badge="一致"; else cls="ng"; badge="不一致"; fi
-  echo "<tr><td>${label}</td><td class=num>-</td><td class=num>-</td><td class=num>${t}</td><td class=\"badge ${cls}\">${badge} (=orders ${e})</td></tr>"
+  echo "<tr><td>${label}</td><td class=num>-</td><td class=num>-</td><td class=num>${t}</td><td class=\"badge ${cls}\">${badge} (=注文 ${e})</td></tr>"
 }
 
-RECON_ROWS="$(recon_row regions   "$(gv SRC_REGIONS)"   "$(gv STG_REGIONS)"   "$(gv TGT_REGIONS)")
-$(recon_row customers "$(gv SRC_CUSTOMERS)" "$(gv STG_CUSTOMERS)" "$(gv TGT_CUSTOMERS)")
-$(recon_row orders    "$(gv SRC_ORDERS)"    "$(gv STG_ORDERS)"    "$(gv TGT_ORDERS)")
-$(recon_derived order_enriched "$(gv TGT_ORDER_ENRICHED)" "$(gv TGT_ORDERS)")"
+RECON_ROWS="$(recon_row 地域 "$(gv SRC_REGIONS)"   "$(gv STG_REGIONS)"   "$(gv TGT_REGIONS)")
+$(recon_row 顧客 "$(gv SRC_CUSTOMERS)" "$(gv STG_CUSTOMERS)" "$(gv TGT_CUSTOMERS)")
+$(recon_row 注文 "$(gv SRC_ORDERS)"    "$(gv STG_ORDERS)"    "$(gv TGT_ORDERS)")
+$(recon_derived "注文（拡張）" "$(gv TGT_ORDER_ENRICHED)" "$(gv TGT_ORDERS)")"
 
-# カタログ表
+# 変換ルール表（テーブル名・種類を日本語化）
 CATALOG_ROWS=""
 while IFS='|' read -r tbl cls last so; do
   [ -z "$tbl" ] && continue
-  CATALOG_ROWS+="<tr><td>${tbl}</td><td>${cls}</td><td>${last}</td><td class=num>${so}</td></tr>"
+  CATALOG_ROWS+="<tr><td>$(jp_table "$tbl")</td><td>$(jp_class "$cls")</td><td>${last}</td><td class=num>${so}</td></tr>"
 done < <(echo "${CATALOG}")
 
-# run_log 表
+# 直近の変換実行 表（種別・状態を日本語化）
 RUNLOG_ROWS=""
 while IFS='|' read -r rid rname rmode rstat rstart rcnt; do
   [ -z "$rid" ] && continue
   local_cls="ok"; [ "$rstat" != "SUCCESS" ] && local_cls="ng"
-  RUNLOG_ROWS+="<tr><td class=num>${rid}</td><td>${rname}</td><td>${rmode}</td><td class=\"badge ${local_cls}\">${rstat}</td><td>${rstart}</td><td class=num>${rcnt}</td></tr>"
+  RUNLOG_ROWS+="<tr><td class=num>${rid}</td><td>${rname}</td><td>$(jp_mode "$rmode")</td><td class=\"badge ${local_cls}\">$(jp_stat "$rstat")</td><td>${rstart}</td><td class=num>${rcnt}</td></tr>"
 done < <(echo "${RUNLOG}")
 
 # 鮮度のバー幅（遅延が小さいほど良い。視覚用に簡易スケール）
@@ -178,7 +189,7 @@ cat > "${OUT}" <<HTML
 ${META_REFRESH}
 <title>移行状況ダッシュボード</title>
 <style>
- body{font-family:-apple-system,"Segoe UI",Meiryo,sans-serif;margin:0;background:#0f172a;color:#e2e8f0}
+ body{font-family:-apple-system,"Segoe UI","Noto Sans CJK JP","Noto Sans JP",Meiryo,sans-serif;margin:0;background:#0f172a;color:#e2e8f0}
  header{background:#1e293b;padding:16px 24px;border-bottom:2px solid #334155}
  h1{margin:0;font-size:20px} .sub{color:#94a3b8;font-size:13px;margin-top:4px}
  .wrap{padding:20px 24px;max-width:1100px;margin:0 auto}
@@ -197,57 +208,58 @@ ${META_REFRESH}
  .bar>i{display:block;height:100%;background:#38bdf8}
  .muted{color:#64748b;font-size:12px}
 </style></head><body>
-<header><h1>🔄 移行状況ダッシュボード</h1>
-<div class="sub">生成: ${GEN_AT}　|　run: ${RUN}　|　パイプライン: <span class="status-big ${HEALTH_CLS}">${HEALTH}</span>　|　DDL凍結: <span class="status-big ${DDL_CLS}">${DDL_STATUS}</span>$([ "${REFRESH}" -gt 0 ] 2>/dev/null && echo "　|　自動更新 ${REFRESH}s")</div></header>
+<header><h1>データ移行 状況ダッシュボード</h1>
+<div class="sub">生成時刻: ${GEN_AT}　|　実行名: ${RUN}　|　連携処理の状態: <span class="status-big ${HEALTH_CLS}">${HEALTH}</span>　|　テーブル構成の凍結: <span class="status-big ${DDL_CLS}">${DDL_STATUS}</span>$([ "${REFRESH}" -gt 0 ] 2>/dev/null && echo "　|　自動更新 ${REFRESH}秒ごと")</div>
+<div class="sub" style="margin-top:6px">移行元データベース（1.0）→ 移行先データベース（2.0）｜ スキーマ: 1.0（移行元）→ 1.0（移行先の写し）→ 2.0（変換後）</div></header>
 <div class="wrap">
 
-<h2>A. 遅延 / 鮮度（ニアリアルタイム健全性）</h2>
+<h2>A. 反映の遅れ・鮮度（どれだけ最新の状態か）</h2>
 <div class="cards">
- <div class="card"><div class="k">抽出ラグ (SRC最新SCN − 抽出済)</div><div class="v">${EXTRACT_LAG}<span class="u">SCN</span></div></div>
- <div class="card"><div class="k">適用ラグ (抽出済 − 適用済SCN)</div><div class="v">${APPLY_LAG}<span class="u">SCN</span></div></div>
- <div class="card"><div class="k">未搬送 delta (src − tgt delta_id) <span class="badge ${PENDING_CLS}">$(clslabel ${PENDING_CLS})</span></div><div class="v">${PENDING_XFER}<span class="u">件</span></div>
-   <div class="muted">警告閾値: $(gv CFG_PENDING_WARN) 件</div></div>
- <div class="card"><div class="k">TARGET 鮮度 (最終変換からの経過) <span class="badge ${TR_AGE_CLS}">$(clslabel ${TR_AGE_CLS})</span></div><div class="v">${TR_AGE}<span class="u">秒</span></div>
+ <div class="card"><div class="k">抽出の遅れ（移行元1.0の最新 − 抽出済み）</div><div class="v">${EXTRACT_LAG}<span class="u">変更番号</span></div></div>
+ <div class="card"><div class="k">適用の遅れ（抽出済み − 移行先へ適用済み）</div><div class="v">${APPLY_LAG}<span class="u">変更番号</span></div></div>
+ <div class="card"><div class="k">未搬送の差分（移行元 − 移行先） <span class="badge ${PENDING_CLS}">$(clslabel ${PENDING_CLS})</span></div><div class="v">${PENDING_XFER}<span class="u">件</span></div>
+   <div class="muted">警告ライン: $(gv CFG_PENDING_WARN) 件</div></div>
+ <div class="card"><div class="k">移行先2.0の鮮度（最終変換からの経過） <span class="badge ${TR_AGE_CLS}">$(clslabel ${TR_AGE_CLS})</span></div><div class="v">${TR_AGE}<span class="u">秒</span></div>
    <div class="bar"><i style="width:${TR_BARW}%"></i></div>
-   <div class="muted">最終変換: $(gs TRANSFORM_MIN_AT) ｜ 閾値 警告:$(gv CFG_TR_AGE_WARN)s / 危険:$(gv CFG_TR_AGE_CRIT)s</div></div>
+   <div class="muted">最終変換: $(gs TRANSFORM_MIN_AT) ｜ 警告:$(gv CFG_TR_AGE_WARN)秒 / 危険:$(gv CFG_TR_AGE_CRIT)秒</div></div>
 </div>
 
-<h2>B. 件数照合（★移行判断基準: SRC = STAGING = TARGET）</h2>
-<table><tr><th>テーブル</th><th class=num>SRC</th><th class=num>STAGING</th><th class=num>TARGET</th><th>判定</th></tr>
+<h2>B. 件数の突き合わせ（★移行OKの判断基準：移行元1.0 ＝ 移行先1.0 ＝ 移行先2.0）</h2>
+<table><tr><th>テーブル</th><th class=num>移行元1.0</th><th class=num>移行先1.0</th><th class=num>移行先2.0</th><th>判定</th></tr>
 ${RECON_ROWS}
 </table>
 
-<h2>C. パイプライン健全性</h2>
+<h2>C. 連携処理の健全性</h2>
 <div class="cards">
- <div class="card"><div class="k">適用失敗 Tx</div><div class="v">$(gv APPLY_FAILED)</div></div>
- <div class="card"><div class="k">台帳 FAILED</div><div class="v">$(gv LEDGER_FAILED)</div></div>
+ <div class="card"><div class="k">適用に失敗した処理（取引単位）</div><div class="v">$(gv APPLY_FAILED)</div></div>
+ <div class="card"><div class="k">適用台帳の失敗</div><div class="v">$(gv LEDGER_FAILED)</div></div>
  <div class="card"><div class="k">変換エラー件数</div><div class="v">$(gv ERROR_COUNT)</div></div>
- <div class="card"><div class="k">DDL凍結違反 (G7)</div><div class="v"><span class="badge ${DDL_CLS}">${DDL_STATUS}</span></div>
-   <div class="muted">移行期間中の ALTER 等を検知</div></div>
+ <div class="card"><div class="k">テーブル構成の変更検知</div><div class="v"><span class="badge ${DDL_CLS}">${DDL_STATUS}</span></div>
+   <div class="muted">移行中にテーブル定義が変わっていないか監視</div></div>
 </div>
-<h2 style="font-size:13px;border:none;color:#94a3b8;margin:14px 0 6px">直近の変換実行 (migration_run_log)</h2>
-<table><tr><th class=num>run</th><th>名称</th><th>mode</th><th>状態</th><th>開始</th><th class=num>tgt件数</th></tr>
+<h2 style="font-size:13px;border:none;color:#94a3b8;margin:14px 0 6px">直近の変換実行（履歴）</h2>
+<table><tr><th class=num>実行番号</th><th>名称</th><th>種別</th><th>状態</th><th>開始時刻</th><th class=num>移行先件数</th></tr>
 ${RUNLOG_ROWS}
 </table>
 
-<h2>D. テーブル別 変換カタログ</h2>
-<table><tr><th>TARGET表</th><th>変換分類</th><th>最終変換時刻</th><th class=num>順序</th></tr>
+<h2>D. テーブルごとの変換ルール</h2>
+<table><tr><th>対象テーブル</th><th>変換の種類</th><th>最終変換時刻</th><th class=num>順序</th></tr>
 ${CATALOG_ROWS}
 </table>
 
-<h2>E. archive log / FRA 保持リスク（差分が読める期間・領域余裕）</h2>
+<h2>E. アーカイブログ / リドログ領域(FRA) の保持リスク（差分を読める期間・空き）</h2>
 <div class="cards">
- <div class="card"><div class="k">保持本数</div><div class="v">$(gv ARCH_COUNT)</div></div>
- <div class="card"><div class="k">総量</div><div class="v">$(gv ARCH_MB)<span class="u">MB</span></div></div>
- <div class="card"><div class="k">保持期間 <span class="badge ${ARCH_CLS}">$(clslabel ${ARCH_CLS})</span></div><div class="v">$(gv ARCH_DAYS)<span class="u">日</span></div>
-   <div class="muted">閾値 警告:$(gv CFG_ARCH_WARN_DAYS)日 / 危険:$(gv CFG_ARCH_CRIT_DAYS)日 未満</div></div>
- <div class="card"><div class="k">FRA使用率 <span class="badge ${FRA_CLS}">$(clslabel ${FRA_CLS})</span></div><div class="v">${FRA_PCT}<span class="u">%</span></div>
-   <div class="muted">$([ "${FRA_PCT}" = "NA" ] && echo "FRA未構成" || echo "${FRA_USED}/${FRA_LIMIT} MB ｜ 閾値 警告:$(gv CFG_FRA_WARN)% / 危険:$(gv CFG_FRA_CRIT)%")</div></div>
+ <div class="card"><div class="k">保持本数</div><div class="v">$(gv ARCH_COUNT)<span class="u">本</span></div></div>
+ <div class="card"><div class="k">合計サイズ</div><div class="v">$(gv ARCH_MB)<span class="u">MB</span></div></div>
+ <div class="card"><div class="k">保持日数 <span class="badge ${ARCH_CLS}">$(clslabel ${ARCH_CLS})</span></div><div class="v">$(gv ARCH_DAYS)<span class="u">日</span></div>
+   <div class="muted">警告:$(gv CFG_ARCH_WARN_DAYS)日 / 危険:$(gv CFG_ARCH_CRIT_DAYS)日 を下回ったら</div></div>
+ <div class="card"><div class="k">リドログ領域(FRA)の使用率 <span class="badge ${FRA_CLS}">$(clslabel ${FRA_CLS})</span></div><div class="v">${FRA_PCT}<span class="u">%</span></div>
+   <div class="muted">$([ "${FRA_PCT}" = "NA" ] && echo "FRA未設定" || echo "${FRA_USED}/${FRA_LIMIT} MB ｜ 警告:$(gv CFG_FRA_WARN)% / 危険:$(gv CFG_FRA_CRIT)%")</div></div>
  <div class="card"><div class="k">最古 → 最新</div><div class="v" style="font-size:14px">$(gs ARCH_OLDEST) → $(gs ARCH_NEWEST)</div></div>
 </div>
-<p class="muted" style="margin-top:8px">⚙ 運用閾値・CDC間隔($(gv CFG_INTERVAL)s)・変換バッチ($(gv CFG_BATCH)行)は <code>scripts/61_ops_config.sh</code> で変更可能（ops_config）。SRC_SYSTEM値は <code>apply</code> でDB反映。</p>
+<p class="muted" style="margin-top:8px">【設定】警告のしきい値・反映の間隔（$(gv CFG_INTERVAL)秒）・変換のまとめ件数（$(gv CFG_BATCH)件）は <code>scripts/61_ops_config.sh</code> で変更できます。</p>
 
-<p class="muted" style="margin-top:30px">SRC現在SCN=$(gs SRC_CURRENT_SCN) / 抽出済=$(gs EXTRACT_SCN) / 適用済=$(gs APPLY_SCN) / baseline=$(gs BASELINE)　|　抽出状態=$(gs EXTRACT_STATUS) (最終 $(gs EXTRACT_LASTRUN)) / 適用最終 $(gs APPLY_LASTRUN)</p>
+<p class="muted" style="margin-top:30px">移行元1.0 現在番号=$(gs SRC_CURRENT_SCN) / 抽出済み=$(gs EXTRACT_SCN) / 移行先へ適用済み=$(gs APPLY_SCN) / 基準点(baseline)=$(gs BASELINE)　|　抽出の状態=$(gs EXTRACT_STATUS)（最終 $(gs EXTRACT_LASTRUN)）/ 適用の最終 $(gs APPLY_LASTRUN)</p>
 </div></body></html>
 HTML
 
