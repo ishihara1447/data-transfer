@@ -1,0 +1,66 @@
+services:
+  oracle-src:
+    image: container-registry.oracle.com/database/express:21.3.0-xe
+    container_name: oracle-src
+    ports:
+      - "1521:1521"
+    environment:
+      - ORACLE_PASSWORD=${ORACLE_SRC_PASSWORD}
+    volumes:
+      - oracle-src-data:/opt/oracle/oradata
+    networks:
+      - cdc-migration-net
+    restart: unless-stopped
+    healthcheck:
+      # /opt/oracle/checkDBStatus.sh でリスナー・PDB の起動完了を確認する
+      test: ["CMD-SHELL", "/opt/oracle/checkDBStatus.sh"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 5m
+
+  oracle-tgt:
+    image: container-registry.oracle.com/database/express:21.3.0-xe
+    container_name: oracle-tgt
+    ports:
+      - "1522:1521"
+    environment:
+      - ORACLE_PASSWORD=${ORACLE_TGT_PASSWORD}
+    volumes:
+      - oracle-tgt-data:/opt/oracle/oradata
+    networks:
+      - cdc-migration-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/oracle/checkDBStatus.sh"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 5m
+
+  data-generator:
+    build:
+      context: ./data-generator
+      dockerfile: Dockerfile
+    container_name: data-generator
+    environment:
+      - DB_HOST=oracle-src
+      - DB_PORT=1521
+      - DB_SERVICE=XEPDB1
+      - DB_USER=src_schema
+      - DB_PASS=${SRC_SCHEMA_PASS}
+      - GENERATOR_INTENSITY=${GENERATOR_INTENSITY:-MEDIUM}
+    networks:
+      - cdc-migration-net
+    depends_on:
+      oracle-src:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  oracle-src-data:
+  oracle-tgt-data:
+
+networks:
+  cdc-migration-net:
+    driver: bridge

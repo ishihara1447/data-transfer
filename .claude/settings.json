@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "defaultMode": "auto",
+    "allow": [
+      "Write(/home/ishihara1447/projects/data-transfer/**)",
+      "Edit(/home/ishihara1447/projects/data-transfer/**)",
+      "Read(/home/ishihara1447/projects/data-transfer/**)"
+    ]
+  }
+}
