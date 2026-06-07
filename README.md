@@ -116,10 +116,7 @@ oracle-src: SYS.delta_extract（LogMiner / DICT_FROM_ONLINE_CATALOG）
 IT 初心者向けの詳細な手順は [`SETUP_GUIDE.md`](SETUP_GUIDE.md) を参照。
 
 ```bash
-# 0) 事前に1回だけ（自動化不可）：Oracle イメージ取得の許可
-docker login container-registry.oracle.com   # https://container-registry.oracle.com で規約同意
-
-# 1) 取得して構築（コンテナ起動 + 両DBのスキーマ/パッケージ/設定を自動デプロイ）
+# 取得して構築（コンテナ起動 + 両DBのスキーマ/パッケージ/設定を自動デプロイ）
 git clone <repo-url> && cd data-transfer
 ./setup.sh            # 標準構築（10〜15分）
 # ./setup.sh --full   # 初期ロード + CDC/ダッシュボード常駐まで自動
@@ -128,7 +125,10 @@ git clone <repo-url> && cd data-transfer
 
 `setup.sh` が自動で行うこと：前提確認 → `.env` 自動生成 → コンテナ起動・healthy 待機 →
 **正しい順序での全SQLデプロイ**（src: 10→11→13→14→30→31→34→35 / tgt: 20→32→40→41→42→33）→
-data-generator 起動。手作業は `docker login` と `git clone` のみ。
+data-generator 起動。手作業は実質 `git clone` のみ。
+
+> **Oracle のログインは原則不要**（21c XE イメージは匿名 pull 可能。検証済み）。
+> 稀に取得できない環境でのみ `docker login container-registry.oracle.com` を実行してから再実行する。
 
 ---
 
@@ -137,7 +137,8 @@ data-generator 起動。手作業は `docker login` と `git clone` のみ。
 <details>
 <summary>クリックして展開</summary>
 
-#### 1. Oracle Container Registry にログイン
+#### 1. Oracle Container Registry にログイン（原則不要・取得できない場合のみ）
+21c XE イメージは匿名 pull 可能なため通常は不要。取得に失敗する環境でのみ実施:
 ```bash
 docker login container-registry.oracle.com
 ```
