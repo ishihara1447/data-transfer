@@ -29,34 +29,34 @@ EOF" 2>/dev/null
 # 共通CSS（ダッシュボードと統一したサイバーパンク）
 read -r -d '' CSS <<'CSS' || true
 <style>
- :root{--cyan:#00eaff;--pink:#ff2a6d;--purple:#b14aed;--green:#39ff14}
+ /* 落ち着いたサイバーパンク（ダッシュボードと統一） */
+ :root{--cyan:#79c0cf;--pink:#cf86a4;--purple:#9183c0;--green:#73c79a;--yellow:#cfb978}
  *{box-sizing:border-box}
  body{font-family:-apple-system,"Segoe UI","Noto Sans CJK JP","Noto Sans JP",Meiryo,sans-serif;margin:0;
-   color:#cde8ff;background:#06040f;
-   background-image:radial-gradient(circle at 10% -10%,rgba(177,74,237,.20),transparent 42%),
-     linear-gradient(rgba(0,234,255,.045) 1px,transparent 1px),
-     linear-gradient(90deg,rgba(0,234,255,.045) 1px,transparent 1px);
-   background-size:auto,32px 32px,32px 32px}
+   color:#c2ccdf;background:#11141d;
+   background-image:radial-gradient(circle at 10% -12%,rgba(145,131,192,.12),transparent 45%),
+     linear-gradient(rgba(121,192,207,.025) 1px,transparent 1px),
+     linear-gradient(90deg,rgba(121,192,207,.025) 1px,transparent 1px);
+   background-size:auto,34px 34px,34px 34px}
  .wrap{padding:20px 24px;max-width:1280px;margin:0 auto}
- h1{font-size:19px;letter-spacing:.12em;color:#fff;text-transform:uppercase;
-   text-shadow:0 0 8px var(--cyan),0 0 18px rgba(0,234,255,.5)}
- .muted{color:#7c87b8;font-size:12px}
+ h1{font-size:19px;letter-spacing:.08em;color:#e6edf7;text-shadow:0 0 6px rgba(121,192,207,.25)}
+ .muted{color:#7b86a0;font-size:12px}
  table{width:100%;border-collapse:collapse;border-radius:8px;overflow:hidden;
-   border:1px solid rgba(0,234,255,.22);box-shadow:0 0 14px rgba(177,74,237,.10);margin-top:10px}
- th,td{padding:7px 10px;text-align:left;font-size:12px;border-bottom:1px solid rgba(0,234,255,.12);vertical-align:top}
- tr{background:rgba(12,9,28,.85)}
- th{background:linear-gradient(90deg,rgba(255,42,109,.30),rgba(177,74,237,.24));color:#fff;
-   letter-spacing:.05em;text-transform:uppercase;position:sticky;top:0}
+   border:1px solid rgba(121,192,207,.14);margin-top:10px}
+ th,td{padding:7px 10px;text-align:left;font-size:12px;border-bottom:1px solid rgba(121,192,207,.09);vertical-align:top}
+ tr{background:#171b27}
+ th{background:linear-gradient(90deg,rgba(207,134,164,.16),rgba(145,131,192,.14));color:#dfe6f2;
+   letter-spacing:.04em;position:sticky;top:0}
  td.num{text-align:right;font-variant-numeric:tabular-nums;font-family:"Consolas",monospace}
- td.sql{font-family:"Consolas","SFMono-Regular",monospace;color:#bdf4ff;white-space:pre-wrap;word-break:break-all;max-width:680px}
+ td.sql{font-family:"Consolas","SFMono-Regular",monospace;color:#a9c6cf;white-space:pre-wrap;word-break:break-all;max-width:680px}
  .op{font-weight:700;border-radius:4px;padding:1px 7px;font-size:11px}
- .ins{color:#001a06;background:var(--green)} .upd{color:#1a1400;background:#fde047} .del{color:#fff;background:var(--pink)}
- .neonbtn{display:inline-block;text-decoration:none;font-size:13px;font-weight:700;letter-spacing:.04em;
-   padding:8px 14px;border-radius:6px;color:var(--cyan);border:1px solid var(--cyan);
-   background:rgba(0,234,255,.06);box-shadow:0 0 10px rgba(0,234,255,.25)}
- .neonbtn.pink{color:var(--pink);border-color:var(--pink);background:rgba(255,42,109,.07)}
- #flt{background:rgba(12,9,28,.9);border:1px solid var(--cyan);color:#eafcff;border-radius:6px;
-   padding:8px 12px;font-size:13px;width:340px;margin-top:8px;box-shadow:0 0 8px rgba(0,234,255,.2)}
+ .ins{color:#0d2419;background:var(--green)} .upd{color:#2a2207;background:var(--yellow)} .del{color:#2a0d16;background:var(--pink)}
+ .neonbtn{display:inline-block;text-decoration:none;font-size:13px;font-weight:700;letter-spacing:.03em;
+   padding:8px 14px;border-radius:6px;color:#9fd0da;border:1px solid rgba(121,192,207,.55);
+   background:rgba(121,192,207,.05)}
+ .neonbtn.pink{color:#d9a3b8;border-color:rgba(207,134,164,.55);background:rgba(207,134,164,.05)}
+ #flt{background:#1a1f2c;border:1px solid rgba(121,192,207,.5);color:#dde6f4;border-radius:6px;
+   padding:8px 12px;font-size:13px;width:340px;margin-top:8px}
 </style>
 <script>
 function fltRows(){var q=document.getElementById('flt').value.toLowerCase();
