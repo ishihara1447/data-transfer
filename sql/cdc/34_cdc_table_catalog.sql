@@ -35,9 +35,13 @@ CREATE TABLE cdc_schema.cdc_table_catalog (
     CONSTRAINT chk_cdc_catalog_active CHECK (is_active IN ('Y','N'))
 );
 
--- Phase1 スコープの SYSTEM_EVENTS に加え、Phase2 で扱う実テーブルを登録
-INSERT INTO cdc_schema.cdc_table_catalog(table_name, pk_column, sort_order, remarks)
-VALUES ('SYSTEM_EVENTS', 'EVENT_ID', 100, 'Phase1 貫通テスト用');
+-- 移行対象テーブル（STAGING/TARGET があり変換ルールが定義済みのもの）を登録。
+-- ★追跡対象は STAGING_SCHEMA に実在するテーブルと一致させること。STAGING に無い表を
+--   is_active='Y' にすると、その変更を delta_apply できず ORA-00942 で Tx 全体が失敗する。
+-- SYSTEM_EVENTS は Phase1 貫通テスト専用で STAGING/TARGET に無いため is_active='N'（除外）。
+--   Phase1 テスト(scripts/11 等)を回すときだけ一時的に 'Y' へ更新する。
+INSERT INTO cdc_schema.cdc_table_catalog(table_name, pk_column, is_active, sort_order, remarks)
+VALUES ('SYSTEM_EVENTS', 'EVENT_ID', 'N', 100, 'Phase1 貫通テスト専用（STAGING/TARGET無し・通常は除外）');
 INSERT INTO cdc_schema.cdc_table_catalog(table_name, pk_column, sort_order, remarks)
 VALUES ('REGIONS', 'REGION_ID', 10, 'PASS_THROUGH 対象');
 INSERT INTO cdc_schema.cdc_table_catalog(table_name, pk_column, sort_order, remarks)

@@ -48,6 +48,11 @@ GRANT FLASHBACK ANY TABLE        TO cdc_schema;
 -- DB リンク作成
 GRANT CREATE PUBLIC DATABASE LINK TO cdc_schema;
 GRANT CREATE DATABASE LINK        TO cdc_schema;
+-- Data Pump エクスポート権限（差分搬送 scripts/06 と初期ロード scripts/30 の expdp で必須）
+-- ★これが無いと expdp が ORA-39087: directory name DATA_PUMP_DIR is invalid で失敗する。
+--   tgt 側 staging_ctl は 32_delta_queue_tgt.sql で同等の IMP 権限を付与済み。
+GRANT DATAPUMP_EXP_FULL_DATABASE          TO cdc_schema;
+GRANT READ, WRITE ON DIRECTORY DATA_PUMP_DIR TO cdc_schema;
 
 -- log_schema: 移行フェーズ用ログ管理 (oracle-src でのみ作成)
 CREATE USER log_schema IDENTIFIED BY &&LOG_SCHEMA_PASS;
