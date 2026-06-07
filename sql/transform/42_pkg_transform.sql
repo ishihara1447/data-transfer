@@ -135,12 +135,18 @@ CREATE OR REPLACE PACKAGE BODY log_schema.pkg_transform AS
         RETURN v_list;
     END common_columns;
 
-    -- 差分窓 WHERE（DELTA時のみ付与。effective_ts = NVL(updated_at, created_at)）
+    -- 差分窓 WHERE（DELTA時のみ付与）
+    -- ★ synced_at（STAGING への適用時刻＝tgt壁時計）で窓を切る。
+    --   旧実装は NVL(updated_at,created_at)（ソース業務時刻）を使っていたが、
+    --   watermark は tgt 壁時計のため時間軸が不一致。パイプライン遅延・障害で
+    --   「ソース時刻 < watermark」の行が静かに永久欠落するバグがあった。
+    --   synced_at は delta_apply がトリガで適用時に刻むため watermark と同一時間軸となり、
+    --   適用 happens-before 変換である限り取りこぼさない。
     FUNCTION delta_where(p_mode IN VARCHAR2) RETURN VARCHAR2 IS
     BEGIN
         IF p_mode = C_MODE_DELTA THEN
-            RETURN ' WHERE NVL(s.updated_at, s.created_at) > :last ' ||
-                   ' AND NVL(s.updated_at, s.created_at) <= :snap ';
+            RETURN ' WHERE s.synced_at > :last ' ||
+                   ' AND s.synced_at <= :snap ';
         ELSE
             RETURN '';
         END IF;
@@ -242,8 +248,8 @@ CREATE OR REPLACE PACKAGE BODY log_schema.pkg_transform AS
                        log_schema.pkg_transform_util.status_to_active_flag(s.status) AS is_active,
                        CAST(s.created_at AS DATE) AS created_date
                 FROM staging_schema.customers s
-                WHERE NVL(s.updated_at, s.created_at) > p_last
-                  AND NVL(s.updated_at, s.created_at) <= p_snap
+                WHERE s.synced_at > p_last
+                  AND s.synced_at <= p_snap
             ) src
             ON (t.customer_id = src.customer_id)
             WHEN MATCHED THEN UPDATE SET
@@ -296,8 +302,8 @@ CREATE OR REPLACE PACKAGE BODY log_schema.pkg_transform AS
                             THEN TRUNC(s.delivery_date) - TRUNC(s.order_date) END AS lead_time_days,
                        s.total_amount, s.tax_amount, s.total_amount - s.tax_amount AS net_amount
                 FROM staging_schema.orders s
-                WHERE NVL(s.updated_at, s.created_at) > p_last
-                  AND NVL(s.updated_at, s.created_at) <= p_snap
+                WHERE s.synced_at > p_last
+                  AND s.synced_at <= p_snap
             ) src
             ON (t.order_id = src.order_id)
             WHEN MATCHED THEN UPDATE SET
@@ -365,8 +371,8 @@ CREATE OR REPLACE PACKAGE BODY log_schema.pkg_transform AS
                 LEFT JOIN staging_schema.customers c ON c.customer_id = o.customer_id
                 LEFT JOIN staging_schema.regions   r ON r.region_id   = o.shipping_region_id
                 LEFT JOIN log_schema.code_mapping  m ON m.code_type='ORDER_STATUS' AND m.src_code = o.status
-                WHERE NVL(o.updated_at, o.created_at) > p_last
-                  AND NVL(o.updated_at, o.created_at) <= p_snap
+                WHERE o.synced_at > p_last
+                  AND o.synced_at <= p_snap
             ) src
             ON (t.order_id = src.order_id)
             WHEN MATCHED THEN UPDATE SET

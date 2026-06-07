@@ -280,6 +280,8 @@ data-transfer/
 | 5 | LOB が `EMPTY_CLOB()` になる | out-of-line LOB は redo にインライン化されない | `FLASHBACK QUERY` フォールバックが必要（未実装） |
 | 6 | `DBMS_LOGMNR_D.BUILD` が PDB スキーマを含まない | `CDB$ROOT` からの flat-file 辞書は PDB オブジェクトを含まない。PDB から実行すると `ORA-65040` | **解析は移行元で行い、結果 SQL を搬送**する設計に変更 |
 | 7 | Archive log が消滅（10日後） | XE では保持期間が短い | CDC 停止中も archive log の保持設定を確認・運用すること |
+| 8 | フレッシュ環境で `impdp` が `ORA-31640`（搬送ダンプを開けない） | 新規コンテナでは `DATA_PUMP_DIR` の GUID サブディレクトリが Data Pump 初回実行まで物理的に存在せず、`ls -d */` 推測が空を返してベースディレクトリへ誤配置する | tgt の `DATA_PUMP_DIR` 実パスを `DBA_DIRECTORIES` から取得し `mkdir -p` してから配置（scripts/06・30 で対応済み） |
+| 9 | TARGET に変換結果が一部欠落（件数が STAGING に満たない） | transform DELTA の差分窓が「ソース業務時刻 `updated_at/created_at`」、watermark が「tgt 壁時計」で時間軸不一致。パイプライン遅延・障害で「ソース時刻 < watermark」の行が永久に窓外となり静かに欠落 | STAGING に `synced_at`(tgt適用時刻) 列＋トリガを追加し、差分窓を `synced_at` で切る（watermark と同一時間軸）。scripts と sql/transform/40・42 で対応済み |
 
 ---
 

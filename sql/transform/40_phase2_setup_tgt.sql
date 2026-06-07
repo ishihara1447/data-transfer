@@ -102,6 +102,7 @@ CREATE TABLE staging_schema.regions (
     is_active         NUMBER(1)     NOT NULL,
     created_at        TIMESTAMP(6)  NOT NULL,
     updated_at        TIMESTAMP(6),
+    synced_at         TIMESTAMP(6)  DEFAULT SYSTIMESTAMP,  -- ★tgt適用時刻(DELTA変換窓の基準)
     CONSTRAINT pk_stg_regions PRIMARY KEY (region_id)
 );
 
@@ -121,6 +122,7 @@ CREATE TABLE staging_schema.customers (
     created_at     TIMESTAMP(6)  DEFAULT SYSTIMESTAMP NOT NULL,
     updated_at     TIMESTAMP(6),
     created_by     VARCHAR2(100),
+    synced_at      TIMESTAMP(6)  DEFAULT SYSTIMESTAMP,  -- ★tgt適用時刻(DELTA変換窓の基準)
     CONSTRAINT pk_stg_customers PRIMARY KEY (customer_id)
 );
 
@@ -139,12 +141,41 @@ CREATE TABLE staging_schema.orders (
     notes               VARCHAR2(2000),
     created_at          TIMESTAMP(6)  DEFAULT SYSTIMESTAMP NOT NULL,
     updated_at          TIMESTAMP(6),
+    synced_at           TIMESTAMP(6)  DEFAULT SYSTIMESTAMP,  -- ★tgt適用時刻(DELTA変換窓の基準)
     CONSTRAINT pk_stg_orders PRIMARY KEY (order_id)
 );
--- DELTA 増分変換の対象絞り込み用（updated_at 基準）
-CREATE INDEX staging_schema.ix_stg_cust_upd ON staging_schema.customers (updated_at);
-CREATE INDEX staging_schema.ix_stg_ord_upd  ON staging_schema.orders (updated_at);
-CREATE INDEX staging_schema.ix_stg_reg_upd  ON staging_schema.regions (updated_at);
+-- DELTA 増分変換の対象絞り込み用（synced_at = tgt適用時刻 基準）
+CREATE INDEX staging_schema.ix_stg_cust_synced ON staging_schema.customers (synced_at);
+CREATE INDEX staging_schema.ix_stg_ord_synced  ON staging_schema.orders (synced_at);
+CREATE INDEX staging_schema.ix_stg_reg_synced  ON staging_schema.regions (synced_at);
+
+-- ============================================================
+-- STAGING の synced_at を「delta_apply が行を書き込んだ tgt 時刻」で自動更新するトリガ。
+-- delta_apply は SQL_REDO を EXECUTE IMMEDIATE で replay する（=通常DMLなのでトリガ発火）。
+-- これにより DELTA 変換窓(synced_at)と watermark(tgt壁時計)の時間軸が一致し、
+-- パイプライン遅延・障害があっても TARGET への取りこぼしが起きない。
+-- ============================================================
+CREATE OR REPLACE TRIGGER staging_schema.trg_stg_reg_synced
+    BEFORE INSERT OR UPDATE ON staging_schema.regions
+    FOR EACH ROW
+BEGIN
+    :NEW.synced_at := SYSTIMESTAMP;
+END;
+/
+CREATE OR REPLACE TRIGGER staging_schema.trg_stg_cust_synced
+    BEFORE INSERT OR UPDATE ON staging_schema.customers
+    FOR EACH ROW
+BEGIN
+    :NEW.synced_at := SYSTIMESTAMP;
+END;
+/
+CREATE OR REPLACE TRIGGER staging_schema.trg_stg_ord_synced
+    BEFORE INSERT OR UPDATE ON staging_schema.orders
+    FOR EACH ROW
+BEGIN
+    :NEW.synced_at := SYSTIMESTAMP;
+END;
+/
 
 -- ============================================================
 -- TARGET_SCHEMA: 変換後スキーマ

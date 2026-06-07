@@ -105,13 +105,23 @@ docker cp "${SRC}:${SRC_DMP_PATH}" "${HOST_TMP}/${DMP_FILE}"
 # ホスト側で全読み取り権限を付与してから tgt に配置（oracle ユーザーが読めるように）
 chmod 644 "${HOST_TMP}/${DMP_FILE}"
 
-# tgt 側の DATA_PUMP_DIR 実体ディレクトリを解決（GUID配下）
-TGT_DMP_DIR=$(docker exec "${TGT}" bash -c "ls -d /opt/oracle/admin/XE/dpdump/*/ 2>/dev/null | head -1")
-TGT_DMP_DIR="${TGT_DMP_DIR:-/opt/oracle/admin/XE/dpdump/}"
-echo "  tgt 配置先: ${TGT_DMP_DIR}${DMP_FILE}"
-docker cp "${HOST_TMP}/${DMP_FILE}" "${TGT}:${TGT_DMP_DIR}${DMP_FILE}"
+# tgt 側の DATA_PUMP_DIR 実体パスを DB から取得（権威ある値）。
+# ★ ls 推測は不可: フレッシュ環境では GUID サブディレクトリが Data Pump 初回実行まで
+#   物理的に存在せず、ls が空を返してベースディレクトリへ誤配置 → impdp が
+#   ORA-31640 でダンプを開けない（clone直後に必ず再現するバグ）。
+#   DBA_DIRECTORIES の directory_path は末尾スラッシュ無しなので ${DIR}/${FILE} で連結。
+TGT_DMP_DIR=$(docker exec -i -u oracle "${TGT}" bash -c "sqlplus -S '/ as sysdba' <<'SQLEOF'
+SET PAGESIZE 0 FEEDBACK OFF HEADING OFF TRIMSPOOL ON
+ALTER SESSION SET CONTAINER = XEPDB1;
+SELECT directory_path FROM dba_directories WHERE directory_name='DATA_PUMP_DIR';
+SQLEOF" 2>/dev/null | tr -d '[:space:]')
+TGT_DMP_DIR="${TGT_DMP_DIR:-/opt/oracle/admin/XE/dpdump}"
+# GUID サブディレクトリが未作成でも確実に配置できるよう作成しておく
+docker exec -u oracle "${TGT}" bash -c "mkdir -p '${TGT_DMP_DIR}'"
+echo "  tgt 配置先: ${TGT_DMP_DIR}/${DMP_FILE}"
+docker cp "${HOST_TMP}/${DMP_FILE}" "${TGT}:${TGT_DMP_DIR}/${DMP_FILE}"
 # docker cp は root/UID1000 所有でコピーするため oracle ユーザーが読めるよう権限付与
-docker exec "${TGT}" bash -c "chmod 644 '${TGT_DMP_DIR}${DMP_FILE}'" 2>/dev/null || true
+docker exec "${TGT}" bash -c "chmod 644 '${TGT_DMP_DIR}/${DMP_FILE}'" 2>/dev/null || true
 echo "  搬送完了: ${DMP_FILE}"
 
 # ----------------------------------------------------------------

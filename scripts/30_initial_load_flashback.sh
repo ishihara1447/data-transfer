@@ -74,10 +74,17 @@ SRC_DMP_PATH=$(docker exec "${SRC}" bash -c "find /opt/oracle/admin/XE/dpdump -n
 if [[ -z "${SRC_DMP_PATH}" ]]; then echo "ERROR: ダンプ未生成: ${DMP_FILE}"; exit 1; fi
 docker cp "${SRC}:${SRC_DMP_PATH}" "${HOST_TMP}/${DMP_FILE}" >/dev/null
 chmod 644 "${HOST_TMP}/${DMP_FILE}"
-TGT_DMP_DIR=$(docker exec "${TGT}" bash -c "ls -d /opt/oracle/admin/XE/dpdump/*/ 2>/dev/null | head -1")
-TGT_DMP_DIR="${TGT_DMP_DIR:-/opt/oracle/admin/XE/dpdump/}"
-docker cp "${HOST_TMP}/${DMP_FILE}" "${TGT}:${TGT_DMP_DIR}${DMP_FILE}" >/dev/null
-docker exec "${TGT}" bash -c "chmod 644 '${TGT_DMP_DIR}${DMP_FILE}'" 2>/dev/null || true
+# tgt の DATA_PUMP_DIR 実体パスを DB から取得（ls 推測はフレッシュ環境で GUID
+# サブディレクトリ未作成のとき誤配置→ORA-31640 になるため不可）。末尾スラッシュ無し。
+TGT_DMP_DIR=$(docker exec -i -u oracle "${TGT}" bash -c "sqlplus -S '/ as sysdba' <<'SQLEOF'
+SET PAGESIZE 0 FEEDBACK OFF HEADING OFF TRIMSPOOL ON
+ALTER SESSION SET CONTAINER = XEPDB1;
+SELECT directory_path FROM dba_directories WHERE directory_name='DATA_PUMP_DIR';
+SQLEOF" 2>/dev/null | tr -d '[:space:]')
+TGT_DMP_DIR="${TGT_DMP_DIR:-/opt/oracle/admin/XE/dpdump}"
+docker exec -u oracle "${TGT}" bash -c "mkdir -p '${TGT_DMP_DIR}'"
+docker cp "${HOST_TMP}/${DMP_FILE}" "${TGT}:${TGT_DMP_DIR}/${DMP_FILE}" >/dev/null
+docker exec "${TGT}" bash -c "chmod 644 '${TGT_DMP_DIR}/${DMP_FILE}'" 2>/dev/null || true
 echo "  搬送完了: ${DMP_FILE}"
 
 # ----------------------------------------------------------------
