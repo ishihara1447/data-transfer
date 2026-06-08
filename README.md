@@ -1,372 +1,287 @@
-# Oracle データ移行検証環境
+# Oracle 無停止データ移行 検証環境
 
-Oracle データベース移行を **業務停止なし** で実施するための手順・設計を検証する環境。  
-本番は Oracle 12c（約5TB・約500テーブル）、ローカルは Oracle 21c XE コンテナで動作確認を行う。
+> 稼働中の Oracle データベースを **できるだけ止めずに**、別の新しいデータベースへ移し替える――
+> その「やり方（手順・設計・ロジック）」を、小さなコンテナ環境で安全に試して確かめるためのプロジェクトです。
 
-> **注意**: 本番性能検証には使用しない。構文・構造・ロジックの試作専用。
+本番は **Oracle 12c（約5TB・約500テーブル）**。それをいきなり触るのは危険なので、
+手元の **Oracle 21c XE コンテナ2台**で同じ仕組みを再現し、移行方式が正しく動くかを検証します。
+
+**この環境でできること（ハイライト）**
+
+- 🟢 **無停止に近い移行**を「①丸ごとコピー → ②変更を継続反映 → ③新しい形に変換」の三段構えで実現
+- 🔌 **オフライン前提**でも動く設計：移行元で変更を解析し、**結果のSQLだけをファイルで運ぶ**（DBリンクや GoldenGate に依存しない）
+- 📊 **進捗をひと目で確認できる監視ダッシュボード**（件数の一致・遅れ・保持リスク・適用した変更の中身まで）
+- ⚡ **`git clone` → `./setup.sh` の1コマンド**で誰の環境でも同じものを再現
+
+> ⚠️ **本番の性能検証用ではありません。** 構文・構造・移行ロジックの「試作・確認」専用です。
 
 ---
 
-## 移行状況ダッシュボード（ビューア）
+## 目次
+
+1. [目的・背景・制約](#1-目的背景制約)
+2. [ひと目でわかる：監視ダッシュボード](#2-ひと目でわかる監視ダッシュボード)
+3. [登場人物：データベースとスキーマ](#3-登場人物データベースとスキーマ)
+4. [データ同期の基本方針（概要 → 詳細）](#4-データ同期の基本方針概要--詳細)
+5. [監視モニター画面の説明](#5-監視モニター画面の説明)
+6. [使い方（クイックスタート）](#6-使い方クイックスタート)
+7. [ディレクトリ構成](#7-ディレクトリ構成)
+8. [設計ドキュメント・関連資料](#8-設計ドキュメント関連資料)
+9. [用語集・補足](#9-用語集補足)
+
+---
+
+## 1. 目的・背景・制約
+
+### 目的（なぜ作ったか）
+
+レガシーな本番 Oracle を、新しいデータベース基盤へ **業務を止めずに移行**したい。
+ただし本番でいきなり試すのはリスクが高い。そこで **本番と同じ制約・同じ方式を小さく再現**し、
+「この手順なら安全に移せる」と確信できる状態を作ることが目的です。あわせて、社内の別メンバーが
+**同じ環境を再現し、移行の進み具合を自分の目で確認できる**ことも目指しています。
+
+### 背景（どんな状況か）
+
+- 移行元は長年使われてきた **Oracle 12c**。データ量は **約 5TB**、テーブルは **約 500 本**。
+- 移行先は **新しい構造のデータベース**（テーブルの統合や項目の作り替えを伴う）。
+- 「メンテナンスで何時間も止める」ことは業務上できれば避けたい（＝**無停止移行**が要件）。
+
+### 制約（やりにくくしている条件）
+
+| 制約 | 内容 | この環境での対応 |
+|------|------|------------------|
+| オフライン | 移行元と移行先が**ネットワークでつながらない** | 変更を**ファイル化して物理搬送**（検証では `docker cp` で代用） |
+| DBリンク不可 | データベース同士の直接接続が使えない | 直接コピーせず、**抽出 → ファイル → 適用**で受け渡す |
+| GoldenGate 不可 | 専用のレプリケーション製品が使えない | Oracle 標準機能（**LogMiner / Data Pump**）だけで実現 |
+| スキーマ変換あり | 移行元と移行先で**テーブルの形が違う** | 移行先で **PL/SQL による変換層**を用意 |
+| 無停止 | 移行中も移行元は動き続ける | 動いている間の変更を**継続的に追いかけて反映** |
+
+> これらの制約のため、一般的な「ツールでまるごと同期」は使えません。
+> **標準機能だけで・オフラインでも・形を変えながら・止めずに**移すのが本プロジェクトの肝です。
+
+---
+
+## 2. ひと目でわかる：監視ダッシュボード
 
 <p align="center">
   <img src="docs/images/dashboard.png" alt="移行状況ダッシュボード" width="820">
 </p>
 
-`bash scripts/50_migration_dashboard.sh` で生成される自己完結 HTML（`out/migration_dashboard.html`）を
-ブラウザで開いた画面。**移行元データベース（1.0）** と **移行先データベース（2.0）** の両方を照会し、
-移行の進み具合をひと目で確認できる（表記は IT 初心者にも分かるよう日本語化）。
-`scripts/51_dashboard_daemon.sh` で定期再生成すれば自動更新される。
-
-> **登場人物**：移行元DB（1.0）→ 移行先DB（2.0）。スキーマは 1.0（移行元）→ 1.0（移行先の写し）→ 2.0（変換後）の3つ。
-> テーブルは「地域・顧客・注文・注文（拡張）」。
-
-**画面の説明**
-
-- **ヘッダ**: 生成時刻・実行名と、連携処理の状態（正常／要確認）・テーブル構成の凍結状態のバッジ。
-- **A. 反映の遅れ・鮮度**: 抽出の遅れ・適用の遅れ（変更番号の差）、未搬送の差分件数、移行先2.0の鮮度
-  （最終変換からの経過秒）。しきい値を超えると黄／赤で警告。
-- **B. 件数の突き合わせ（移行OKの判断基準）**: テーブルごとに **移行元1.0 ＝ 移行先1.0 ＝ 移行先2.0**
-  の件数を突き合わせ、一致を緑・不一致を赤で表示。**移行完了の主判断基準**。
-- **C. 連携処理の健全性**: 適用失敗・適用台帳の失敗・変換エラー件数・テーブル構成の変更検知、直近の変換実行履歴。
-- **D. テーブルごとの変換ルール**: 各テーブルの変換の種類（そのままコピー／軽い変換／重い変換）と最終変換時刻。
-- **E. アーカイブログ / リドログ領域(FRA) の保持リスク**: 過去の変更をさかのぼれる範囲（残っている変更履歴
-  ファイル数・合計サイズ・さかのぼれる期間）と FRA 使用率。枯渇リスクをしきい値で警告（運用値は
-  `scripts/61_ops_config.sh` で変更可）。
-- **F. 適用した変更（REDO）ログの確認**: 日付ボタンを押すと、その日に移行先へ適用した変更
-  （追加／更新／削除の SQL 全文）を別画面で開ける（直近7日・画面内で絞り込み検索可）。
-  生成は `scripts/52_redo_log_view.sh`。
-
-> 上図は、稼働中アプリを模した data-generator で継続的に変更を流したのち差分同期を排出させ、
-> 移行元1.0 ＝ 移行先1.0 ＝ 移行先2.0 が完全一致（B が全行「一致」）した健全状態のスナップショット。
-> 配色はサイバーパンク調。
+移行の進み具合を1画面で確認できる HTML 画面です（`bash scripts/50_migration_dashboard.sh` で生成）。
+いちばん大事なのは中央の **「件数の突き合わせ」** で、**移行元1.0 ＝ 移行先1.0 ＝ 移行先2.0** が
+すべて「一致」（緑）になっていれば、データが最後まで正しく流れている合図です。
+詳しい見方は [5章](#5-監視モニター画面の説明)。
 
 ---
 
-## 背景・制約
+## 3. 登場人物：データベースとスキーマ
 
-| 項目 | 内容 |
-|------|------|
-| 移行元 | Oracle 12c（レガシー環境） |
-| 移行先 | 新 Oracle DB（別拠点） |
-| データ量 | 約 5TB / 約 500 テーブル |
-| ネットワーク | オフライン環境（インターネット不可） |
-| DB リンク | 利用困難 |
-| GoldenGate | 利用不可 |
-| スキーマ変換 | 必要（複数テーブルの統合など複雑な変換あり） |
-| 業務停止 | 極力回避 |
+この環境では **2つのデータベース**と **複数のスキーマ（データの区画）** が出てきます。
+混乱しやすいので、まず全体像を押さえてください。**「1.0＝移行元の形」「2.0＝移行先の新しい形」** と覚えると分かりやすいです。
+
+```
+   ┌──────────────── 移行元DB（1.0）= oracle-src ────────────────┐        ┌──────────────────── 移行先DB（2.0）= oracle-tgt ────────────────────┐
+   │                                                            │ 変更を  │                                                                      │
+   │   SRC_SCHEMA（1.0：本番の業務データ。常に変更が入る）       │ ファイルで│   STAGING_SCHEMA（1.0：移行元の“写し”）  →  TARGET_SCHEMA（2.0：変換後）│
+   │   CDC_SCHEMA（制御：変更を抽出して貯める）                  │ 搬送 ──▶ │   STAGING_CTL（制御：搬送・適用の台帳）   LOG_SCHEMA（制御：変換ログ）  │
+   └────────────────────────────────────────────────────────────┘        └──────────────────────────────────────────────────────────────────────┘
+```
+
+| どのDB | スキーマ名 | バージョン | ひとことで言うと |
+|--------|-----------|:---------:|------------------|
+| 移行元DB（oracle-src） | **SRC_SCHEMA** | **1.0** | 本番の業務データ（の模擬）。アプリが動いて**常に変更が入る**おおもと |
+| 移行元DB（oracle-src） | CDC_SCHEMA | － | （制御用）変更を抽出して一時的に貯めておく作業場 |
+| 移行先DB（oracle-tgt） | **STAGING_SCHEMA** | **1.0** | 移行元とまったく同じ形の**“写し”**。初期コピー＋差分で SRC と同じ状態に保つ |
+| 移行先DB（oracle-tgt） | STAGING_CTL | － | （制御用）搬送されてきた変更と、適用済みかどうかの台帳 |
+| 移行先DB（oracle-tgt） | **TARGET_SCHEMA** | **2.0** | **新しい構造に作り替えた最終形**。STAGING(1.0) から変換して作る |
+| 移行先DB（oracle-tgt） | LOG_SCHEMA | － | （制御用）変換ルール・実行ログ・各種カタログ |
+
+**業務テーブル**は「**地域 / 顧客 / 注文**」の3種類。移行先(2.0)にはこれらに加え、複数表をまとめた
+**「注文（拡張）」** という変換後専用のテーブルもあります。
+
+> **要点**：同じ「1.0」が2回出てきます。**移行元1.0（SRC_SCHEMA）** と **移行先1.0（STAGING_SCHEMA）** です。
+> 後者は前者の写しで、両者がイコールになるよう保ち、そこから **2.0（TARGET_SCHEMA）** へ変換します。
+
+このほか、稼働中アプリを模した **`data-generator`** コンテナが、移行元(1.0)へ継続的に
+追加・更新・削除を流し込み、「動いている本番」を再現します。
 
 ---
 
-## 採用した移行方式
+## 4. データ同期の基本方針（概要 → 詳細）
 
-### 全体フロー
+### 4.1 概要（まず3行で）
 
-```
-[移行元 Oracle 12c]
-   │
-   ├─ Step 1: 基準 SCN 取得
-   ├─ Step 2: DataPump expdp（FLASHBACK_SCN 指定）→ ダンプファイル生成
-   ├─ Step 3: ダンプファイルをオフライン搬送（SSD/NAS）
-   │
-[移行先 Oracle]
-   ├─ Step 4: DataPump impdp → STAGING_SCHEMA（移行元と同一構造）
-   ├─ Step 5: 差分抽出ループ（移行元で LogMiner → delta_queue）
-   ├─ Step 6: delta_queue を DataPump でファイル化 → 搬送 → 移行先にロード
-   ├─ Step 7: STAGING_SCHEMA に差分適用（SYS.delta_apply）
-   ├─ Step 8: PL/SQL 変換（STAGING_SCHEMA → TARGET_SCHEMA）
-   └─ Step 9: カットオーバー（接続先切替）
-```
-
-### 差分同期の設計方針
-
-**移行元で LogMiner 解析 → 結果 SQL だけを搬送**
+1. **最初に丸ごとコピー**する（初期ロード）。ある瞬間の移行元を、整合の取れた状態で移行先へ写す。
+2. **その後の変更だけを継続的に送って反映**する（差分同期）。移行元は止めない。
+3. **移行先で新しい形に作り替える**（変換）。写し（1.0）から最終形（2.0）を継続生成する。
 
 ```
-oracle-src: SYS.delta_extract（LogMiner / DICT_FROM_ONLINE_CATALOG）
-   → cdc_schema.delta_queue に INSERT/UPDATE/DELETE を格納
-      → expdp でダンプファイル化
-         → 物理搬送（検証環境では docker cp）
-            → oracle-tgt: impdp → staging_ctl.delta_queue
-               → SYS.delta_apply（SRC→STAGING 置換して EXECUTE IMMEDIATE）
-                  → STAGING_SCHEMA に差分反映
+ ① 初期ロード（1回）         ② 差分同期（継続）              ③ 変換（継続）
+ 移行元1.0  ──丸ごと──▶  移行先1.0  ◀──変更を継続反映──  移行元1.0     移行先1.0 ──変換──▶ 移行先2.0
+ (SRC)                    (STAGING)                       (SRC)        (STAGING)            (TARGET)
 ```
 
-> **なぜ移行先で LogMiner しないのか**  
-> `DBMS_LOGMNR_D.BUILD` の flat-file 辞書は PDB スキーマを含まないため、  
-> 移行先で archive log を読んでも変更を 0 件と認識する。  
-> スキーマ定義がある移行元で解析し、翻訳済み SQL を搬送するのが正しい設計。
+### 4.2 詳細（各ステップの中身）
 
-詳細: `docs/migration-strategy.md` / `docs/delta-extract-design.md`
+#### ① 初期ロード ― 整合点を固定して丸ごとコピー（1回）
+
+ある時点の基準（SCN＝データベースの「変更通し番号」）を決め、その瞬間のスナップショットを
+**Data Pump（Oracle標準のエクスポート/インポート）** でファイル化して移行先へ運び、`STAGING_SCHEMA` に取り込みます。
+動いている最中でも「ある一点」で整合が取れた状態を写せるのがポイントです（`scripts/30_initial_load_flashback.sh`）。
+
+#### ② 差分同期 ― 変更を「移行元で解析」してファイルで運ぶ（継続）
+
+```
+oracle-src: 変更履歴(REDO)を LogMiner で解析し、INSERT/UPDATE/DELETE の SQL に復元
+   └▶ CDC_SCHEMA の差分キューに貯める
+       └▶ Data Pump でファイル化 → 物理搬送（検証では docker cp）
+           └▶ oracle-tgt: 取り込み → SYS.delta_apply が STAGING_SCHEMA に適用
+```
+
+- **なぜ移行元で解析するのか**：変更履歴を読むには「テーブルの定義情報（辞書）」が要ります。
+  移行先にはまだ正しい辞書が無く、読んでも「変更0件」になってしまいます。
+  そこで**定義がそろっている移行元で解析し、復元した SQL だけを運ぶ**のが正解、と検証で確認しました。
+- **取りこぼし・重複を防ぐ工夫**：「コミット確定済みの変更だけ」を「コミット番号(COMMIT_SCN)」の順で
+  取り出し、**取引（トランザクション）単位の台帳**で「適用済みか」を管理します。途中で止まっても、
+  重複適用せず・取りこぼさずに再開できます。
+
+#### ③ 変換 ― 写し(1.0) から最終形(2.0) を作る（継続）
+
+`STAGING_SCHEMA`(1.0) の内容を、移行先の新しい構造 `TARGET_SCHEMA`(2.0) へ **PL/SQL で変換**します。
+変換は「設定表（カタログ）」で管理され、テーブルごとに難易度別の3種類があります。
+
+| 変換の種類 | 内容 | 例 |
+|------------|------|----|
+| そのままコピー | 形が同じなので1対1で写す | 地域 |
+| 軽い変換 | 行の中で項目を整える | 顧客（氏名の連結・電話番号の整形・状態→フラグ） |
+| 重い変換 | 複数表の結合・項目の分解など | 注文（拡張）（注文＋顧客＋地域の結合、住所の分解 など） |
+
+初回は全件、その後は **「移行先に取り込まれた時刻」を基準に変更分だけ**を冪等に作り替えるため、
+パイプラインに遅れや停止があっても取りこぼしません（near-real-time で約十数秒で反映）。
+
+> 設計の詳細は [`docs/migration-strategy.md`](docs/migration-strategy.md) /
+> [`docs/delta-extract-design.md`](docs/delta-extract-design.md) /
+> [`docs/phase2-transform-design.md`](docs/phase2-transform-design.md) を参照。
 
 ---
 
-## 前提条件
+## 5. 監視モニター画面の説明
 
-| 項目 | 要件 |
-|------|------|
-| OS | Windows 11 + WSL2 (Ubuntu) |
-| Docker Desktop | WSL2 integration 有効 |
-| Oracle アカウント | container-registry.oracle.com へのアクセス権 |
-| メモリ | WSL2 に 4GB 以上割り当て推奨 |
+`bash scripts/50_migration_dashboard.sh` で `out/migration_dashboard.html` を生成し、ブラウザで開きます。
+`scripts/51_dashboard_daemon.sh` を使うと定期的に再生成され、自動更新されます。
+画面は黒青ベースのシンプルなサイバー系で、すべて日本語表記です。
 
----
+| セクション | 何が分かるか |
+|-----------|--------------|
+| **ヘッダ** | 生成時刻・実行名と、**連携処理の状態**（正常／要確認）・**テーブル構成の凍結**状態のバッジ |
+| **A. 反映の遅れ・鮮度** | 抽出の遅れ・適用の遅れ（変更番号の差）、未搬送の差分件数、移行先2.0の鮮度（最終変換からの経過秒）。しきい値超過で黄／赤に |
+| **B. 件数の突き合わせ** | テーブルごとに **移行元1.0 ＝ 移行先1.0 ＝ 移行先2.0** を突き合わせ、一致＝緑／不一致＝赤。**移行OKの主な判断基準** |
+| **C. 連携処理の健全性** | 適用の失敗・台帳の失敗・変換エラー件数・テーブル構成の変更検知、直近の変換実行履歴 |
+| **D. テーブルごとの変換ルール** | 各テーブルの変換の種類（そのままコピー／軽い変換／重い変換）と最終変換時刻 |
+| **E. 保持リスク** | 過去の変更をさかのぼれる範囲（残っている変更履歴ファイル数・合計サイズ・さかのぼれる日数）と保管領域(FRA)使用率。枯渇しそうなら警告 |
+| **F. 適用した変更（REDO）の確認** | 日付ボタンから、その日に移行先へ適用した変更（追加／更新／削除の **SQL全文**）を別画面で確認（絞り込み検索つき・`scripts/52_redo_log_view.sh`） |
 
-## コンテナ構成
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│ Docker Network: cdc-migration-net                               │
-│                                                                 │
-│  ┌──────────────────┐              ┌──────────────────┐        │
-│  │  oracle-src      │  差分SQL搬送  │  oracle-tgt      │        │
-│  │  Oracle 21c XE   │ ───────────▶ │  Oracle 21c XE   │        │
-│  │  port: 1521      │  （ファイル）  │  port: 1522      │        │
-│  │                  │              │                  │        │
-│  │  SRC_SCHEMA      │              │  STAGING_SCHEMA  │        │
-│  │  CDC_SCHEMA      │              │  STAGING_CTL     │        │
-│  │  LOG_SCHEMA      │              │  TARGET_SCHEMA   │        │
-│  └──────────────────┘              └──────────────────┘        │
-│         ▲                                                       │
-│         │ DML 発行                                              │
-│  ┌──────────────┐                                               │
-│  │ data-generator│  Python コンテナ（停止中）                    │
-│  │ LOW/MED/HIGH  │  稼働中 DB をシミュレーション                  │
-│  └──────────────┘                                               │
-└─────────────────────────────────────────────────────────────────┘
-```
-
-| コンテナ | 役割 |
-|---------|------|
-| `oracle-src` | 移行元 DB を模擬。LogMiner での差分抽出元 |
-| `oracle-tgt` | 移行先 DB を模擬。STAGING→TARGET の変換先 |
-| `data-generator` | 稼働中アプリを模擬。LOW 強度で SRC_SCHEMA に DML を継続発行 |
+> **補足**：稼働中アプリ（data-generator）が動き続けるため、移行元が一時的に先行して B が「不一致」（赤）に
+> なることがあります。これは異常ではなく、差分が追いつけば「一致」に戻ります。
+> 警告のしきい値・反映間隔などは `scripts/61_ops_config.sh` で変更できます。
 
 ---
 
-## 初回セットアップ
+## 6. 使い方（クイックスタート）
 
-### ⚡ クイックスタート（推奨：ほぼ自動）
-
-別マシン（社内 WSL2 等）への移植は **`git clone` してスクリプト1回**で完了する。
-IT 初心者向けの詳細な手順は [`SETUP_GUIDE.md`](SETUP_GUIDE.md) を参照。
+別マシン（社内 WSL2 等）への展開は **`git clone` してスクリプト1回**で完了します。
+IT にくわしくない方向けの詳しい手順は **[`SETUP_GUIDE.md`](SETUP_GUIDE.md)** を参照してください。
 
 ```bash
-# 取得して構築（コンテナ起動 + 両DBのスキーマ/パッケージ/設定を自動デプロイ）
 git clone <repo-url> && cd data-transfer
-./setup.sh            # 標準構築（10〜15分）
-# ./setup.sh --full   # 初期ロード + CDC/ダッシュボード常駐まで自動
-# ./setup.sh --plan   # 何をするか確認だけ（実行しない）
+./setup.sh --full      # 構築 + 初期ロード + 初期変換 + 監視まで一気通貫（推奨・10〜15分）
+# ./setup.sh           # 構築のみ（コンテナ + スキーマ + データ生成器）
+# ./setup.sh --plan    # 何をするかの確認だけ（実行しない）
 ```
 
-`setup.sh` が自動で行うこと：前提確認 → `.env` 自動生成 → コンテナ起動・healthy 待機 →
-**正しい順序での全SQLデプロイ**（src: 10→11→13→14→30→31→34→35 / tgt: 20→32→40→41→42→33）→
-data-generator 起動。手作業は実質 `git clone` のみ。
+`setup.sh` が自動で行うこと：前提確認 → `.env` 自動生成 → コンテナ起動・起動完了待ち →
+**正しい順序での全SQLデプロイ** → データ生成器の起動（`--full` なら初期ロード〜初期変換〜常駐監視まで）。
+手作業は実質 `git clone` のみです。
 
-> **Oracle のログインは原則不要**（21c XE イメージは匿名 pull 可能。検証済み）。
-> 稀に取得できない環境でのみ `docker login container-registry.oracle.com` を実行してから再実行する。
+> **Oracle のログインは原則不要**（21c XE イメージは匿名で取得可能・検証済み）。
+> 取得できない環境でのみ `docker login container-registry.oracle.com` を行ってください。
+
+構築後の確認・日々の操作（起動／停止／監視／設定変更）は [`SETUP_GUIDE.md`](SETUP_GUIDE.md) の 8〜9章にまとめています。
 
 ---
 
-### 手動セットアップ（仕組みを理解したい場合）
-
-<details>
-<summary>クリックして展開</summary>
-
-#### 1. Oracle Container Registry にログイン（原則不要・取得できない場合のみ）
-21c XE イメージは匿名 pull 可能なため通常は不要。取得に失敗する環境でのみ実施:
-```bash
-docker login container-registry.oracle.com
-```
-[Oracle Container Registry](https://container-registry.oracle.com) で利用規約に同意しておくこと。
-
-#### 2. 環境変数ファイルの作成
-```bash
-cp .env.example .env   # 必要ならパスワードを編集
-```
-
-#### 3. コンテナ起動
-```bash
-docker compose up -d
-docker compose ps   # 全コンテナが healthy になるまで待つ（3〜5 分）
-```
-
-#### 4. oracle-src のスキーマ構築（順序が重要）
-```
-sql/cdc/10_cdc_create_users.sql        ユーザー作成（&&パスワードは .env 値を DEFINE）
-sql/cdc/11_cdc_src_schema.sql          SRC_SCHEMA DDL
-sql/cdc/13_cdc_schema.sql              CDC_SCHEMA DDL
-sql/cdc/14_supplemental_logging.sql    ARCHIVELOG + 補足ログ（DB再起動を伴う）
-sql/cdc/30_delta_queue_src.sql         delta_queue
-sql/cdc/31_pkg_delta_extract_src.sql   SYS.delta_extract
-sql/cdc/34_cdc_table_catalog.sql       追跡対象カタログ
-sql/cdc/35_ops_config_src.sql          運用パラメータ ops_config
-```
-
-#### 5. oracle-tgt のスキーマ構築（順序が重要）
-```
-sql/cdc/20_staging_users_tgt.sql       STAGING_SCHEMA ユーザー
-sql/cdc/32_delta_queue_tgt.sql         staging_ctl + delta_queue + apply_ledger
-sql/transform/40_phase2_setup_tgt.sql  TARGET/LOG ユーザー + 各表 + 変換カタログ
-sql/transform/41_pkg_transform_util.sql 共有変換関数
-sql/transform/42_pkg_transform.sql     変換オーケストレータ
-sql/cdc/33_pkg_delta_apply_tgt.sql     SYS.delta_apply
-```
-
-各ファイルは `CONNECT / AS SYSDBA` を内蔵。`docker exec -i -u oracle <container> sqlplus -S /nolog < file`
-で流し込める（`&&` 置換変数を使うファイルは事前に `DEFINE` が必要 → `setup.sh` が自動注入）。
-</details>
-
----
-
-## 差分同期の実行手順
-
-### 1. 差分を抽出（oracle-src で実行）
-
-```sql
--- oracle-src の sqlplus（/ as sysdba）で実行
-SET SERVEROUTPUT ON SIZE UNLIMITED
-BEGIN SYS.delta_extract('delta_run_01'); END;
-/
--- 出力例: delta_extract: extracted=4 rows, scn=[10723219,10723505]
-```
-
-### 2. 差分を搬送して適用（ホスト側で実行）
-
-```bash
-bash scripts/06_transfer_delta_datapump.sh
-```
-
-このスクリプトが以下を一括実行する:
-1. oracle-src: `expdp` で `delta_queue` をダンプファイル化
-2. ダンプファイルを docker cp で搬送（本番では SSD/NAS）
-3. oracle-tgt: `impdp` で `staging_ctl.delta_queue` にロード
-4. oracle-tgt: `SYS.delta_apply` で `STAGING_SCHEMA` に適用
-
-### 3. 適用結果の確認
-
-```sql
--- oracle-tgt の sqlplus（/ as sysdba）で実行
-ALTER SESSION SET CONTAINER = XEPDB1;
-
--- 適用済み差分の確認
-SELECT delta_id, operation,
-       CASE WHEN applied_at IS NULL THEN 'NOT APPLIED' ELSE 'APPLIED' END AS status
-FROM staging_ctl.delta_queue ORDER BY delta_id;
-
--- STAGING_SCHEMA の件数確認
-SELECT table_name, num_rows FROM dba_tables WHERE owner='STAGING_SCHEMA';
-```
-
----
-
-## ディレクトリ構成
+## 7. ディレクトリ構成
 
 ```
 data-transfer/
-├── .claude/agents/            サブエージェント定義
-├── docs/
-│   ├── migration-strategy.md  本番移行方式の全体設計書（主要ドキュメント）
-│   ├── delta-extract-design.md 差分抽出・適用方式の詳細設計
-│   ├── cdc-verification-design.md CDC検証フェーズの設計（初期版）
-│   ├── environment-design.md  コンテナ構成設計
-│   ├── migration-design.md    スキーマ変換移行設計（フェーズ1）
-│   ├── logging-and-error-handling.md ログ設計
-│   └── oracle-compatibility-policy.md Oracle 12c 互換ポリシー
+├── README.md                         このファイル（全体像）
+├── SETUP_GUIDE.md                    IT初心者向け 移植・操作手順書
+├── setup.sh                          ワンコマンド構築スクリプト
+├── docker-compose.yml / .env.example コンテナ定義と設定ひな形
+├── docs/                             設計ドキュメント（→ 8章）
+│   └── images/dashboard.png          ダッシュボードのスクリーンショット
 ├── sql/
-│   ├── 00〜05_*.sql           フェーズ1: スキーマ変換移行（同一DB内）
-│   └── cdc/
-│       ├── 10〜18_*.sql       CDCフェーズ（DBリンク方式・参考実装）
-│       ├── 20_staging_users_tgt.sql   STAGING_SCHEMA ユーザー作成
-│       ├── 22_logminer_on_tgt.sql     （調査用: 移行先LogMiner ※制約あり）
-│       ├── 30_delta_queue_src.sql     ★ oracle-src: delta_queue テーブル
-│       ├── 31_pkg_delta_extract_src.sql ★ SYS.delta_extract プロシージャ
-│       ├── 32_delta_queue_tgt.sql     ★ oracle-tgt: staging_ctl + delta_queue
-│       └── 33_pkg_delta_apply_tgt.sql ★ SYS.delta_apply プロシージャ
+│   └── cdc/         移行元・移行先のスキーマ／差分抽出・適用のSQL（10〜35）
+│   └── transform/   変換層のSQL（40〜42：STAGING(1.0)→TARGET(2.0)）
 ├── scripts/
-│   ├── 01_datapump_export.sh  DataPump エクスポート（初期同期用）
-│   ├── 02_transfer_dumps.sh   ダンプファイル搬送
-│   ├── 03_datapump_import.sh  DataPump インポート（初期同期用）
-│   ├── 04_sync_archivelogs.sh archive log 同期（調査用）
-│   ├── 05_apply_delta_on_tgt.sh （調査用: 移行先LogMiner）
-│   └── 06_transfer_delta_datapump.sh ★ 差分搬送パイプライン（メイン）
-├── data-generator/            稼働中アプリシミュレーター（Python）
-│   ├── generator.py           メインループ
-│   ├── workload/              DML ワークロード定義
-│   └── init/seed_master.py    初期マスタデータ投入
-├── docker-compose.yml
-├── .env.example
-└── README.md
+│   ├── 30_initial_load_flashback.sh  ① 初期ロード（整合点固定コピー）
+│   ├── 06_transfer_delta_datapump.sh ② 差分の搬送＋適用
+│   ├── 40_cdc_cycle.sh / 41_*.sh     ② 継続CDC（差分の抽出→搬送→適用→変換 を繰り返す）
+│   ├── 50_migration_dashboard.sh     監視ダッシュボード生成
+│   ├── 51_dashboard_daemon.sh        ダッシュボード自動更新
+│   ├── 52_redo_log_view.sh           適用した変更(REDO)の確認ページ生成
+│   ├── 60_ddl_freeze.sh              テーブル構成の凍結チェック
+│   └── 61_ops_config.sh             運用パラメータ（しきい値等）の変更ツール
+└── data-generator/                   稼働中アプリの模擬（継続的にDMLを発行）
 ```
-
-★ = 現在の主要実装ファイル
 
 ---
 
-## 設計上の重要な発見（ハマりどころ）
+## 8. 設計ドキュメント・関連資料
+
+| ドキュメント | 内容 |
+|--------------|------|
+| [`SETUP_GUIDE.md`](SETUP_GUIDE.md) | **環境の作り方・操作・トラブル対処**（IT初心者向け・目次/用語集つき） |
+| [`docs/migration-strategy.md`](docs/migration-strategy.md) | 本番移行方式の全体設計 |
+| [`docs/delta-extract-design.md`](docs/delta-extract-design.md) | 差分抽出・適用方式の詳細設計 |
+| [`docs/phase2-transform-design.md`](docs/phase2-transform-design.md) | STAGING(1.0)→TARGET(2.0) 変換層の設計 |
+| [`docs/ops-config-design.md`](docs/ops-config-design.md) | 運用パラメータ（しきい値・保持・バッチ等）の設計 |
+| [`docs/oracle-compatibility-policy.md`](docs/oracle-compatibility-policy.md) | 本番 Oracle 12c との互換ポリシー |
+| [`docs/archive-measurement-findings.md`](docs/archive-measurement-findings.md) | 変更履歴(archive log)の生成量・保持の見積り |
+
+<details>
+<summary><b>設計上の重要な学び（検証で判明したハマりどころ・エンジニア向け）</b></summary>
 
 本検証で判明した実装上の注意点。本番適用時に留意すること。
 
 | # | 現象 | 原因 | 対策 |
 |---|------|------|------|
-| 1 | LogMiner が変更を 0 件と報告 | `DICT_FROM_ONLINE_CATALOG` 使用時、PDB の変更は `CON_ID=1(CDB$ROOT)` として報告される | `CON_ID` フィルタを使わず `SEG_OWNER` のみで絞る |
-| 2 | 適用時 `ORA-00933` | LogMiner の `SQL_REDO` は末尾にセミコロンが付く。`EXECUTE IMMEDIATE` は不可 | 末尾セミコロンを除去してから適用 |
-| 3 | `impdp` が `ORA-31640` | `docker cp` したファイルが UID1000 所有で oracle ユーザーが読めない | ホスト側で `chmod 644` してから配置 |
-| 4 | `DATA_PUMP_DIR` のパスが見つからない | PDB では GUID サブディレクトリ配下にダンプが格納される | `find` で実パスを動的解決 |
-| 5 | LOB が `EMPTY_CLOB()` になる | out-of-line LOB は redo にインライン化されない | `FLASHBACK QUERY` フォールバックが必要（未実装） |
-| 6 | `DBMS_LOGMNR_D.BUILD` が PDB スキーマを含まない | `CDB$ROOT` からの flat-file 辞書は PDB オブジェクトを含まない。PDB から実行すると `ORA-65040` | **解析は移行元で行い、結果 SQL を搬送**する設計に変更 |
-| 7 | Archive log が消滅（10日後） | XE では保持期間が短い | CDC 停止中も archive log の保持設定を確認・運用すること |
-| 8 | フレッシュ環境で `impdp` が `ORA-31640`（搬送ダンプを開けない） | 新規コンテナでは `DATA_PUMP_DIR` の GUID サブディレクトリが Data Pump 初回実行まで物理的に存在せず、`ls -d */` 推測が空を返してベースディレクトリへ誤配置する | tgt の `DATA_PUMP_DIR` 実パスを `DBA_DIRECTORIES` から取得し `mkdir -p` してから配置（scripts/06・30 で対応済み） |
-| 9 | TARGET に変換結果が一部欠落（件数が STAGING に満たない） | transform DELTA の差分窓が「ソース業務時刻 `updated_at/created_at`」、watermark が「tgt 壁時計」で時間軸不一致。パイプライン遅延・障害で「ソース時刻 < watermark」の行が永久に窓外となり静かに欠落 | STAGING に `synced_at`(tgt適用時刻) 列＋トリガを追加し、差分窓を `synced_at` で切る（watermark と同一時間軸）。scripts と sql/transform/40・42 で対応済み |
+| 1 | LogMiner が変更を 0 件と報告 | `DICT_FROM_ONLINE_CATALOG` 使用時、PDB の変更は `CON_ID=1(CDB$ROOT)` として報告される | `CON_ID` で絞らず `SEG_OWNER` で絞る |
+| 2 | 適用時 `ORA-00933` | LogMiner の `SQL_REDO` は末尾にセミコロンが付く | 末尾セミコロンを除去してから `EXECUTE IMMEDIATE` |
+| 3 | `DBMS_LOGMNR_D.BUILD` が PDB スキーマを含まない | flat-file 辞書は PDB オブジェクトを含まない | **解析は移行元で行い結果 SQL を搬送**する設計に |
+| 4 | 取りこぼし/重複（長時間トランザクション） | 単純な `SCN >` フィルタでは境界で漏れる | COMMITTED_DATA_ONLY + COMMIT_SCN 基準 + 採掘開始点(low watermark) の分離 |
+| 5 | フレッシュ環境で expdp が `ORA-39087` | 新規DBで `DATA_PUMP_DIR` の実体や権限が未整備 | 抽出ユーザに DataPump 権限/ディレクトリ権限を付与・実パスを動的解決＋作成 |
+| 6 | 変換結果が一部欠落 | 差分窓を「業務時刻」、進捗を「壁時計」で見ていて時間軸不一致 | STAGING に「適用時刻(synced_at)」を持たせ、窓と進捗を同一時間軸に |
+| 7 | 追跡対象とSTAGINGの不一致で `ORA-00942` | STAGING に無い表を追跡対象にしていた | 追跡対象は STAGING 実在表と一致させる |
+| 8 | Archive log が消えてCDC再開不能 | XE では保持が短い | 「適用済みになるまで消さない」運用＋保持量の監視（ダッシュE） |
+
+</details>
 
 ---
 
-## 残課題（フェーズ2）
+## 9. 用語集・補足
 
-- [ ] STAGING_SCHEMA 初期同期（DataPump 全量エクスポート/インポート）
-- [ ] 全 10 テーブルへの差分抽出拡張（現在は SYSTEM_EVENTS のみ）
-- [ ] FK 依存順適用（INSERT: 親→子 / DELETE: 子→親）
-- [ ] LOB フォールバック実装（FLASHBACK QUERY）
-- [ ] TARGET_SCHEMA（新構造）の DDL 設計と PL/SQL 変換パッケージ
-- [ ] archive log 生成量計測・保持ポリシー設定
+| 用語 | やさしい説明 |
+|------|--------------|
+| 初期ロード | 最初に行う「丸ごとコピー」。Data Pump でスナップショットを写す |
+| 差分同期 / CDC | 初期ロード後の「変更だけ」を継続的に移行先へ反映すること |
+| LogMiner | Oracle 標準機能。**変更履歴(REDO)** を読んで元の SQL を復元する |
+| Data Pump | Oracle 標準のエクスポート/インポート。データをファイル化して運ぶ |
+| SCN / 変更番号 | データベース内の変更につく通し番号。整合点や進捗の基準に使う |
+| スキーマ | データベース内の「区画」。本環境では 1.0（移行元の形）／2.0（移行先の新しい形）など |
+| STAGING（移行先1.0） | 移行元の“写し”。移行元とイコールに保つ受け皿 |
+| TARGET（移行先2.0） | 新しい構造へ変換した最終形 |
+| テーブル構成の凍結 | 移行中は移行元の**テーブル定義を変えない**約束。変わると差分が壊れるため監視する |
 
----
-
-## トラブルシューティング
-
-### コンテナが healthy にならない
-
-```bash
-docker compose logs oracle-src | tail -50
-```
-
-- メモリ不足: Docker Desktop の割り当てを 4GB 以上に増やす
-- ポート競合: `netstat -tlnp | grep 1521` で確認
-
-### 差分抽出で 0 件が返る
-
-```sql
--- oracle-src CDB$ROOT で直接確認
-EXEC DBMS_LOGMNR.ADD_LOGFILE('...', DBMS_LOGMNR.ADDFILE);
-EXEC DBMS_LOGMNR.START_LOGMNR(STARTSCN => :scn, OPTIONS => DBMS_LOGMNR.DICT_FROM_ONLINE_CATALOG);
-SELECT con_id, seg_owner, seg_name, operation FROM V$LOGMNR_CONTENTS WHERE SEG_OWNER='SRC_SCHEMA';
--- CON_ID=1 で返ってくる点に注意（CON_ID=3 ではない）
-```
-
-### delta_apply が `ORA-00933` で失敗する
-
-```sql
--- SQL_REDO の末尾を確認
-SELECT SUBSTR(sql_redo, -5) FROM staging_ctl.delta_queue WHERE delta_id=:id;
--- セミコロンが付いている場合は 33_pkg_delta_apply_tgt.sql を再デプロイ
-```
-
-### Archive log が消えて CDC が再開できない
-
-```sql
--- 利用可能な最古の archive log を確認
-SELECT MIN(first_change#), TO_CHAR(MIN(first_time),'YYYY-MM-DD HH24:MI') AS oldest
-FROM v$archived_log WHERE deleted='NO' AND standby_dest='NO';
-```
-
-archive log が必要 SCN より古い場合は再スナップショット（初期同期からやり直し）が必要。
+> **再掲**：本環境は**検証・試作専用**です。本番性能の評価には使用しません。
+> 設定の既定パスワードは検証用です。実データ・本番接続情報は投入しないでください。
