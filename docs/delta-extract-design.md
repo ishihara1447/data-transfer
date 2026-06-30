@@ -237,3 +237,138 @@ oracle-src: INSERT (event_id 202402, 202403)
 - STAGING → TARGET の構造変換（タスク#5で別途）
 - 5TB規模のスケール検証（XE では不可。設計上の考慮のみ）
 - LOB フォールバックの完全実装（既存 17_ の知見を流用予定）
+
+---
+
+## 9. SQL_REDO 再生可能性の制約と安全な適用方式（Phase2 設計原則）
+
+### 9.1 SQL_REDO は万能な差分 SQL ではない
+
+`V$LOGMNR_CONTENTS.SQL_REDO` は LogMiner が Redo ログから再構成した SQL であり、
+**`SQL*Plus` でそのまま安全に実行できる保証はない**。
+
+特に以下の場合は直接実行が危険である。
+
+| ケース | 問題点 |
+|--------|--------|
+| CSF=1 の行が存在 | SQL_REDO が次行に分割されており、連結しないと構文が壊れる |
+| LOB型列を含むテーブル | LOB 本体は Redo とは別管理であり SQL_REDO で正確に再現できない |
+| OPERATION_CODE 92/93/94 | LOB_WRITE/LOB_TRIM/LOB_ERASE は通常の DML とは異なる内部操作 |
+| STATUS != 0 | LogMiner が解析できなかった不完全なレコード |
+| 移行先テーブル構造が異なる | STAGING に存在しない列・型に対して SQL が失敗する |
+
+> **設計原則**: SQL_REDO は「直接実行する SQL」ではなく「差分イベントの情報」として扱う。
+> 直接適用（`EXECUTE IMMEDIATE`）は条件を満たした単純テーブルにのみ限定する。
+
+---
+
+### 9.2 テーブル分類（replay_category）
+
+`cdc_schema.cdc_table_catalog` の `replay_category` 列で管理する。
+
+| 分類 | 条件 | 差分適用方式 |
+|------|------|--------------|
+| **A** | LOBなし・STAGING同一構造・PK安定・ホワイトリスト登録済み | SQL_REDO 直接適用（`EXECUTE IMMEDIATE`） |
+| **B** | 列追加・列削除・型変換など STAGING と SRC に差異あり | RAW/STG 変換後に MERGE（現行構成では非使用） |
+| **C** | CLOB/BLOB/NCLOB/XMLType/LONG 等の LOB 列あり | SQL_REDO 直接適用禁止。PK再取得または最終再同期 |
+| **D** | 移行期間中に DDL 変更の可能性あり | DDL 凍結または個別再設計 |
+| **E** | STATUS 異常・UNSUPPORTED・MISSING_SCN 等 | 手動調査キューへ送る |
+
+**本プロジェクトのテーブル分類結果（`sql/cdc/11_cdc_src_schema.sql` 参照）:**
+
+| テーブル | LOB列 | replay_category | 差分適用方式 |
+|---------|-------|----------------|--------------|
+| REGIONS | なし | **A** | SQL_REDO 直接適用（ホワイトリスト登録済み） |
+| CUSTOMERS | BLOB(avatar_image), CLOB(remarks) | **C** | SQL_REDO 直接適用禁止 → 手動調査キュー |
+| ORDERS | CLOB(shipping_address) | **C** | SQL_REDO 直接適用禁止 → 手動調査キュー |
+| SYSTEM_EVENTS | CLOB(event_payload) | **C** | SQL_REDO 直接適用禁止（is_active='N'） |
+
+> **重要**: CUSTOMERS と ORDERS は LOB 列を持つため、`data-generator` が書き込んだ
+> BLOB/CLOB 本体は SQL_REDO から正確に再現できない。STAGING への適用には LOB フォールバックが必要。
+
+---
+
+### 9.3 SQL_REDO 直接適用ホワイトリスト方式
+
+直接適用を許可するテーブルは `cdc_schema.redo_replay_whitelist`（`36_*.sql`）で明示管理する。
+
+**登録条件（すべて満たすこと）:**
+- `cdc_table_catalog.lob_present = 'N'`（LOB列なし）
+- `cdc_table_catalog.replay_category = 'A'`
+- STAGING_SCHEMA と SRC_SCHEMA の構造が同一
+- 主キーまたは一意キーで対象行を安定特定できる
+- 検証環境で PoC 確認済み
+
+```
+現在のホワイトリスト: REGIONS のみ
+CUSTOMERS / ORDERS は LOB あり → 登録禁止
+```
+
+---
+
+### 9.4 CSF 連結処理
+
+`CSF=1` の行は SQL_REDO が次行に続いていることを示す。
+`SYS.delta_extract` は LogMiner 結果の収集ループ内で CSF 行を連結し、
+`delta_queue.sql_redo_assembled`（CLOB）に完全な SQL を格納する。
+
+```
+LogMiner 出力（CSF=1 の場合）:
+  行1: sql_redo = "INSERT INTO ... VALUES ('very long tex", CSF=1
+  行2: sql_redo = "t value')",                             CSF=0
+
+delta_queue に格納されるもの:
+  sql_redo           = "INSERT INTO ... VALUES ('very long tex"  （先頭4000字）
+  sql_redo_assembled = "INSERT INTO ... VALUES ('very long text value')"  （完全SQL）
+```
+
+`SYS.delta_apply` は `sql_redo_assembled` を優先し（NULL の場合は `sql_redo` にフォールバック）
+`EXECUTE IMMEDIATE` に渡す。
+
+---
+
+### 9.5 差分適用判定ロジック（SYS.delta_apply）
+
+```
+FOR 各差分イベント:
+  1. replay_allowed = 'Y' か？
+     No → delta_manual_review_queue に記録 → CONTINUE（スキップ）
+  2. sql_redo_assembled または sql_redo でスキーマ名を置換
+  3. EXECUTE IMMEDIATE で STAGING_SCHEMA に適用
+  4. 失敗 → ROLLBACK してこのTxを FAILED マーク
+
+apply_ledger のTxステータス:
+  APPLIED        : 全行が正常適用
+  PARTIAL        : 一部適用 + 一部 MANUAL_REVIEW（混在Tx）
+  MANUAL_REVIEW  : 全行が手動調査キューへ（LOBテーブルのTx等）
+  FAILED         : SQL 実行エラー
+```
+
+---
+
+### 9.6 LOBテーブルのフォールバック方式（未実装・将来対応）
+
+CUSTOMERS / ORDERS の STAGING への差分反映は、以下いずれかで実装予定。
+
+**方式A（変更PK再取得）**: LogMiner から変更 PK を抽出 → `oracle-src` から該当行を再 SELECT
+→ STAGING へ MERGE。DBリンクが使えない本番では Data Pump ファイル搬送が必要。
+
+**方式B（最終再同期）**: 移行期間中は PK のみ記録し、最終切替時に LOB 対象テーブルだけ
+再抽出・再ロード。停止時間が増えるが実装が単純。
+
+本番の制約（オフライン・DBリンク不可）から方式B が有力。
+`delta_manual_review_queue.fallback_reason = 'TABLE_HAS_LOB'` の行を集計して対象PKを把握する。
+
+---
+
+## 10. 実装ファイル対応表（Phase2）
+
+| ファイル | 内容 |
+|---------|------|
+| `sql/cdc/30_delta_queue_src.sql` | `operation_code/status_code/csf/rs_id/ssn/sql_redo_assembled/replay_*` 追加 |
+| `sql/cdc/31_pkg_delta_extract_src.sql` | STATUS/CSF/OPERATION_CODE 収集・CSF連結・classify_event 分類 |
+| `sql/cdc/32_delta_queue_tgt.sql` | src と同一スキーマ（Data Pump で自動対応） |
+| `sql/cdc/33_pkg_delta_apply_tgt.sql` | replay_allowed チェック・MANUAL_REVIEW ルーティング |
+| `sql/cdc/34_cdc_table_catalog.sql` | `lob_present/replay_category` 追加・LOB棚卸し結果を反映 |
+| `sql/cdc/36_redo_replay_whitelist.sql` | 直接適用ホワイトリスト（REGIONS のみ登録） |
+| `sql/cdc/37_delta_manual_review_queue.sql` | 手動調査キュー（oracle-tgt） |

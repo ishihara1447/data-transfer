@@ -1,6 +1,7 @@
 -- 差分抽出方式: staging_ctl スキーマ + delta_queue + apply_ledger (oracle-tgt 用)
 -- ★Phase1: COMMIT_SCN対応版。apply_ledger で冪等な再開を保証する。
--- 設計: docs/phase1-commit-scn-redesign.md
+-- ★Phase2: delta_queue に SQL_REDO安全性判定カラムを追加（src側と同一構造）
+-- 設計: docs/phase1-commit-scn-redesign.md / docs/delta-extract-design.md (セクション9)
 -- 実行ユーザー: SYS AS SYSDBA / 実行対象: oracle-tgt XEPDB1
 
 WHENEVER SQLERROR EXIT SQL.SQLCODE
@@ -40,8 +41,9 @@ END;
 /
 
 -- ============================================================
--- delta_queue: 搬送されてきた差分（src と同一構造 + commit_scn/xid）
+-- delta_queue: 搬送されてきた差分（src と同一構造）
 -- ★Phase1: commit_scn / xid / change_scn / seq_in_tx を含む
+-- ★Phase2: operation_code/status_code/csf/rs_id/ssn/sql_redo_assembled/replay_* を含む
 -- ============================================================
 DECLARE
     v_cnt NUMBER;
@@ -55,16 +57,31 @@ END;
 /
 
 CREATE TABLE staging_ctl.delta_queue (
-    delta_id      NUMBER         NOT NULL,
-    commit_scn    NUMBER(20)     NOT NULL,   -- ★コミットSCN
-    xid           VARCHAR2(40)   NOT NULL,   -- ★トランザクションID
-    change_scn    NUMBER(20)     NOT NULL,
-    seq_in_tx     NUMBER         NOT NULL,   -- ★Tx内順序
-    table_name    VARCHAR2(100)  NOT NULL,
-    operation     VARCHAR2(20)   NOT NULL,
-    sql_redo      VARCHAR2(4000),
-    pk_value      VARCHAR2(100),
-    extracted_at  TIMESTAMP,
+    delta_id           NUMBER         NOT NULL,
+    commit_scn         NUMBER(20)     NOT NULL,   -- ★コミットSCN
+    xid                VARCHAR2(40)   NOT NULL,   -- ★トランザクションID
+    change_scn         NUMBER(20)     NOT NULL,
+    seq_in_tx          NUMBER         NOT NULL,   -- ★Tx内順序
+    table_name         VARCHAR2(100)  NOT NULL,
+    operation          VARCHAR2(20)   NOT NULL,
+    -- ★Phase2: LogMiner メタ情報（src側と同一構造）
+    operation_code     NUMBER,
+    status_code        NUMBER,
+    info_text          VARCHAR2(4000),
+    csf                NUMBER        DEFAULT 0,
+    rs_id              VARCHAR2(64),
+    ssn                NUMBER,
+    -- SQL テキスト
+    sql_redo           VARCHAR2(4000),
+    sql_redo_assembled CLOB,                      -- ★CSF連結済み完全SQL
+    -- ★Phase2: 適用方式分類（srcで付与・搬送後そのまま使用）
+    replay_category    VARCHAR2(1),
+    replay_allowed     CHAR(1)       DEFAULT 'N',
+    fallback_required  CHAR(1)       DEFAULT 'N',
+    fallback_reason    VARCHAR2(4000),
+    -- 参照用
+    pk_value           VARCHAR2(100),
+    extracted_at       TIMESTAMP,
     CONSTRAINT pk_tgt_delta_queue PRIMARY KEY (delta_id)
 );
 
@@ -90,7 +107,9 @@ BEGIN
                 applied_at     TIMESTAMP     DEFAULT SYSTIMESTAMP,
                 status         VARCHAR2(20)  DEFAULT ''APPLIED'',
                 error_message  VARCHAR2(4000),
-                CONSTRAINT pk_apply_ledger PRIMARY KEY (xid, commit_scn)
+                CONSTRAINT pk_apply_ledger PRIMARY KEY (xid, commit_scn),
+                CONSTRAINT chk_apply_ledger_status CHECK (status IN
+                    (''APPLIED'', ''PARTIAL'', ''MANUAL_REVIEW'', ''FAILED''))
             )';
     END IF;
 END;

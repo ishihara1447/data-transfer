@@ -1,4 +1,4 @@
--- 差分抽出方式: SYS.delta_extract プロシージャ (oracle-src 用) ★Phase1: COMMIT_SCN版
+-- 差分抽出方式: SYS.delta_extract プロシージャ (oracle-src 用) ★Phase2: SQL_REDO安全性判定版
 -- LogMiner(DICT_FROM_ONLINE_CATALOG + COMMITTED_DATA_ONLY)で SRC_SCHEMA の
 -- コミット済み変更を COMMIT_SCN 基準で抽出し cdc_schema.delta_queue に貯める。
 --
@@ -7,12 +7,19 @@
 --   G3: COMMITTED_DATA_ONLY を有効化（未コミット/ROLLBACK分を除外）
 --   - XID / seq_in_tx / change_scn を delta_queue に格納
 --
+-- ★Phase2 追加（docs/delta-extract-design.md セクション9）:
+--   - LogMiner STATUS/OPERATION_CODE/CSF/INFO/RS_ID/SSN を収集
+--   - CSF=1 行の SQL_REDO を連結して sql_redo_assembled CLOB に格納
+--   - テーブル分類(replay_category)・直接適用可否(replay_allowed)をアノテート
+--   - LOBありテーブル → replay_category='C', replay_allowed='N'
+--   - ホワイトリスト登録済みかつ replay_category='A' → replay_allowed='Y'
+--   - ホワイトリスト: cdc_schema.redo_replay_whitelist (36_*.sql で管理)
+--
 -- アーキテクチャ:
---   XEPDB1 読取  → cdc_schema.delta_extract_state (進捗 = last_extracted_commit_scn)
+--   XEPDB1 読取  → cdc_schema.delta_extract_state (進捗)
 --   CDB$ROOT     → START_LOGMNR / V$LOGMNR_CONTENTS 収集
 --   XEPDB1 書込  → cdc_schema.delta_queue に INSERT
 --
--- フェーズ1スコープ: SYSTEM_EVENTS のみ対象（最小構成で貫通確認）
 -- 実行ユーザー: SYS AS SYSDBA (CDB$ROOT) / Oracle 12c 互換
 
 WHENEVER SQLERROR EXIT SQL.SQLCODE
@@ -29,25 +36,48 @@ CREATE OR REPLACE PROCEDURE SYS.delta_extract(
     AUTHID CURRENT_USER
 AS
     TYPE t_change_rec IS RECORD (
-        commit_scn NUMBER,
-        xid        VARCHAR2(40),
-        change_scn NUMBER,
-        seq_in_tx  NUMBER,
-        table_name VARCHAR2(100),
-        operation  VARCHAR2(20),
-        sql_redo   VARCHAR2(4000)
+        commit_scn         NUMBER,
+        xid                VARCHAR2(40),
+        change_scn         NUMBER,
+        seq_in_tx          NUMBER,
+        table_name         VARCHAR2(100),
+        operation          VARCHAR2(20),
+        operation_code     NUMBER,         -- V$LOGMNR_CONTENTS.OPERATION_CODE
+        status_code        NUMBER,         -- V$LOGMNR_CONTENTS.STATUS (0=正常)
+        info_text          VARCHAR2(4000), -- V$LOGMNR_CONTENTS.INFO
+        csf                NUMBER,         -- 0=SQL完結, 1=次行に継続
+        rs_id              VARCHAR2(64),   -- V$LOGMNR_CONTENTS.RS_ID
+        ssn                NUMBER,         -- V$LOGMNR_CONTENTS.SSN
+        sql_redo           VARCHAR2(4000), -- 先頭4000文字（生の1ピース）
+        sql_redo_assembled CLOB,           -- CSF連結済み完全SQL
+        replay_category    VARCHAR2(1),    -- A/B/C/D/E
+        replay_allowed     CHAR(1),        -- Y=直接適用可 / N=禁止
+        fallback_required  CHAR(1),        -- Y=LOBフォールバック必要
+        fallback_reason    VARCHAR2(4000)
     );
     TYPE t_change_tab IS TABLE OF t_change_rec INDEX BY PLS_INTEGER;
 
+    -- テーブル属性マップ型
+    TYPE t_pk_map  IS TABLE OF VARCHAR2(100) INDEX BY VARCHAR2(128);
+    TYPE t_char_map IS TABLE OF CHAR(1)     INDEX BY VARCHAR2(128);
+    TYPE t_cat_map  IS TABLE OF VARCHAR2(1)  INDEX BY VARCHAR2(128);
+
     v_changes        t_change_tab;
-    v_last_commit    NUMBER;           -- 高位水準点(HW): commitフィルタ基準
-    v_mine_start     NUMBER;           -- 低位水準点(LW): START_LOGMNR の採掘開始点
-    v_oldest_open    NUMBER;           -- v_end_scn 時点で実行中の最古Txの START_SCN
-    v_next_hw        NUMBER;           -- 今回更新後の HW
-    v_next_lw        NUMBER;           -- 次回更新後の LW
+    v_pk_map         t_pk_map;         -- table_name → pk_column
+    v_lob_map        t_char_map;       -- table_name → lob_present ('Y'/'N')
+    v_cat_replay_map t_cat_map;        -- table_name → replay_category ('A'/'B'/'C'/'D')
+    v_whitelist      t_char_map;       -- table_name → 'Y' (ホワイトリスト登録済み)
+
+    v_tables         SYS.ODCIVARCHAR2LIST;
+    v_pk_cols        SYS.ODCIVARCHAR2LIST;
+    v_last_commit    NUMBER;
+    v_mine_start     NUMBER;
+    v_oldest_open    NUMBER;
+    v_next_hw        NUMBER;
+    v_next_lw        NUMBER;
     v_end_scn        NUMBER;
     v_current_scn    NUMBER;
-    v_max_commit     NUMBER := 0;
+    v_max_commit     NUMBER      := 0;
     v_extract_cnt    NUMBER      := 0;
     v_idx            PLS_INTEGER := 0;
     i                PLS_INTEGER;
@@ -57,11 +87,9 @@ AS
     v_err_msg        VARCHAR2(4000);
     v_container      VARCHAR2(30) := 'CDB$ROOT';
 
-    -- ★全テーブル化: 追跡対象テーブル（cdc_table_catalog の is_active='Y'）
-    v_tables         SYS.ODCIVARCHAR2LIST;            -- V$LOGMNR_CONTENTS の SEG_NAME フィルタ用
-    v_pk_cols        SYS.ODCIVARCHAR2LIST;            -- 上記と同順の pk_column 配列
-    TYPE t_pk_map IS TABLE OF VARCHAR2(100) INDEX BY VARCHAR2(128);
-    v_pk_map         t_pk_map;                        -- table_name → pk_column（pk_value抽出ヒント）
+    -- CSF連結の状態管理
+    v_in_csf         BOOLEAN     := FALSE;  -- 現在CSF継続行を処理中か
+    v_csf_target     PLS_INTEGER := 0;      -- 連結先の v_changes インデックス
 
     PROCEDURE go_to(p_container IN VARCHAR2) IS
     BEGIN
@@ -92,33 +120,94 @@ AS
         END LOOP;
     END add_logfiles;
 
+    -- イベントごとの replay_category / replay_allowed を判定する
+    -- 優先順位: STATUS異常(E) > LOB操作コード(C) > テーブルLOBあり(C) > ホワイトリストA(A) > その他(B/C/D)
+    PROCEDURE classify_event(p_idx IN PLS_INTEGER) IS
+        v_lob_pres CHAR(1)    := 'N';
+        v_cat      VARCHAR2(1) := 'B';
+        v_in_wl    CHAR(1)    := 'N';
+    BEGIN
+        IF v_lob_map.EXISTS(v_changes(p_idx).table_name) THEN
+            v_lob_pres := v_lob_map(v_changes(p_idx).table_name);
+        END IF;
+        IF v_cat_replay_map.EXISTS(v_changes(p_idx).table_name) THEN
+            v_cat := v_cat_replay_map(v_changes(p_idx).table_name);
+        END IF;
+        IF v_whitelist.EXISTS(v_changes(p_idx).table_name) THEN
+            v_in_wl := v_whitelist(v_changes(p_idx).table_name);
+        END IF;
+
+        IF NVL(v_changes(p_idx).status_code, 0) != 0 THEN
+            -- E: LogMiner STATUS 異常（UNSUPPORTED/MISSING_SCN 等）
+            v_changes(p_idx).replay_category  := 'E';
+            v_changes(p_idx).replay_allowed    := 'N';
+            v_changes(p_idx).fallback_required := 'Y';
+            v_changes(p_idx).fallback_reason   :=
+                'STATUS_CODE=' || v_changes(p_idx).status_code
+                || NVL(' INFO=' || v_changes(p_idx).info_text, '');
+
+        ELSIF v_changes(p_idx).operation_code IN (92, 93, 94) THEN
+            -- C: LOB操作コード (LOB_WRITE=92 / LOB_TRIM=93 / LOB_ERASE=94)
+            -- OPERATION='UPDATE'等と組み合わせて出現し、SQL_REDO直接適用では復元不可
+            v_changes(p_idx).replay_category  := 'C';
+            v_changes(p_idx).replay_allowed    := 'N';
+            v_changes(p_idx).fallback_required := 'Y';
+            v_changes(p_idx).fallback_reason   :=
+                'LOB_OPERATION_CODE=' || v_changes(p_idx).operation_code;
+
+        ELSIF v_lob_pres = 'Y' THEN
+            -- C: テーブルにLOB列あり → SQL_REDO直接適用禁止
+            -- LOB本体はRedoとは別管理のため SQL_REDO で正確に再現できない
+            v_changes(p_idx).replay_category  := 'C';
+            v_changes(p_idx).replay_allowed    := 'N';
+            v_changes(p_idx).fallback_required := 'Y';
+            v_changes(p_idx).fallback_reason   := 'TABLE_HAS_LOB';
+
+        ELSIF v_cat = 'A' AND v_in_wl = 'Y' THEN
+            -- A: 直接適用許可 (ホワイトリスト登録済み・LOBなし・STAGING同一構造)
+            v_changes(p_idx).replay_category  := 'A';
+            v_changes(p_idx).replay_allowed    := 'Y';
+            v_changes(p_idx).fallback_required := 'N';
+            v_changes(p_idx).fallback_reason   := NULL;
+
+        ELSE
+            -- B/C/D: ホワイトリスト未登録 or カタログ分類がA以外
+            v_changes(p_idx).replay_category  := v_cat;
+            v_changes(p_idx).replay_allowed    := 'N';
+            v_changes(p_idx).fallback_required := 'N';
+            v_changes(p_idx).fallback_reason   :=
+                CASE WHEN v_in_wl != 'Y'
+                     THEN 'NOT_IN_WHITELIST(category=' || v_cat || ')'
+                     ELSE 'CATEGORY_' || v_cat END;
+        END IF;
+    END classify_event;
+
 BEGIN
-    -- フェーズ1: XEPDB1 で進捗（last_extracted_commit_scn）を取得
+    -- ───────────────────────────────────────────
+    -- フェーズ1: XEPDB1 で進捗（HW/LW）と追跡テーブル情報を取得
+    -- ───────────────────────────────────────────
     go_to('XEPDB1');
 
-    -- ★HW(commitフィルタ基準) と LW(採掘開始点) を両方読む
     BEGIN
         EXECUTE IMMEDIATE
             'SELECT last_extracted_commit_scn, mine_start_scn ' ||
             'FROM cdc_schema.delta_extract_state WHERE run_name = :1'
         INTO v_last_commit, v_mine_start USING p_run_name;
-    EXCEPTION
-        WHEN NO_DATA_FOUND THEN
-            EXECUTE IMMEDIATE
-                'INSERT INTO cdc_schema.delta_extract_state ' ||
-                '(run_name, last_extracted_commit_scn, mine_start_scn, status) ' ||
-                'VALUES (:1, 0, 0, ''IDLE'')'
-                USING p_run_name;
-            COMMIT;
-            v_last_commit := 0;
-            v_mine_start  := 0;
+    EXCEPTION WHEN NO_DATA_FOUND THEN
+        EXECUTE IMMEDIATE
+            'INSERT INTO cdc_schema.delta_extract_state ' ||
+            '(run_name, last_extracted_commit_scn, mine_start_scn, status) ' ||
+            'VALUES (:1, 0, 0, ''IDLE'')'
+            USING p_run_name;
+        COMMIT;
+        v_last_commit := 0;
+        v_mine_start  := 0;
     END;
 
-    -- 初回（last_commit=0）は現在SCNを起点にする（過去全部は対象外）
     SELECT CURRENT_SCN INTO v_current_scn FROM V$DATABASE;
     IF v_last_commit = 0 THEN
         v_last_commit := v_current_scn - 1;
-        v_mine_start  := v_last_commit;   -- LW も同点から開始
+        v_mine_start  := v_last_commit;
         EXECUTE IMMEDIATE
             'UPDATE cdc_schema.delta_extract_state ' ||
             'SET last_extracted_commit_scn = :1, mine_start_scn = :2, baseline_scn = :3 ' ||
@@ -129,18 +218,14 @@ BEGIN
 
     v_end_scn := v_current_scn;
 
-    -- ★低位水準点の再算出基礎: v_end_scn 時点で実行中の最古トランザクションの START_SCN。
-    --   COMMITTED_DATA_ONLY は Tx の開始レコードが採掘窓に入っていないと再構成できないため、
-    --   未コミットの長時間Txがあれば、その開始SCNより前を次回 LW として保持する必要がある。
-    --   V$TRANSACTION は XEPDB1 コンテナ内(PDBローカル)の実行中Txを返す。
+    -- 低位水準点の再算出: 未コミットの最古Txの START_SCN を取得
     BEGIN
         SELECT NVL(MIN(START_SCN), v_end_scn) INTO v_oldest_open FROM V$TRANSACTION;
     EXCEPTION WHEN OTHERS THEN
-        v_oldest_open := v_end_scn;   -- 取得不能時は安全側で end_scn（LW前進を抑制しない）
+        v_oldest_open := v_end_scn;
     END;
 
-    -- ★全テーブル化: 追跡対象テーブル一覧と PK 列マップをカタログから読む（XEPDB1）
-    --   proc は CDB$ROOT で作成されるため cdc_schema への静的参照は不可 → 動的SQLで読む。
+    -- 追跡対象テーブル一覧と PK 列マップをカタログから読む
     EXECUTE IMMEDIATE
         'SELECT table_name, pk_column FROM cdc_schema.cdc_table_catalog WHERE is_active = ''Y'''
         BULK COLLECT INTO v_tables, v_pk_cols;
@@ -148,7 +233,35 @@ BEGIN
         v_pk_map(v_tables(k)) := v_pk_cols(k);
     END LOOP;
 
-    -- HW 基準で「これ以上コミットTxが無い」場合は採掘不要
+    -- ★Phase2: LOB有無 + replay_category をカタログから読む
+    DECLARE
+        v_tbl_list2 SYS.ODCIVARCHAR2LIST;
+        v_lob_list  SYS.ODCIVARCHAR2LIST;
+        v_cat_list  SYS.ODCIVARCHAR2LIST;
+    BEGIN
+        EXECUTE IMMEDIATE
+            'SELECT table_name, lob_present, replay_category ' ||
+            'FROM cdc_schema.cdc_table_catalog WHERE is_active = ''Y'''
+            BULK COLLECT INTO v_tbl_list2, v_lob_list, v_cat_list;
+        FOR k IN 1 .. v_tbl_list2.COUNT LOOP
+            v_lob_map(v_tbl_list2(k))        := v_lob_list(k);
+            v_cat_replay_map(v_tbl_list2(k)) := v_cat_list(k);
+        END LOOP;
+    END;
+
+    -- ★Phase2: ホワイトリストを読む
+    DECLARE
+        v_wl_tables SYS.ODCIVARCHAR2LIST;
+    BEGIN
+        EXECUTE IMMEDIATE
+            'SELECT table_name FROM cdc_schema.redo_replay_whitelist ' ||
+            'WHERE owner_name = ''SRC_SCHEMA'' AND replay_allowed = ''Y'''
+            BULK COLLECT INTO v_wl_tables;
+        FOR k IN 1 .. v_wl_tables.COUNT LOOP
+            v_whitelist(v_wl_tables(k)) := 'Y';
+        END LOOP;
+    END;
+
     IF v_last_commit >= v_end_scn THEN
         go_to('CDB$ROOT');
         RETURN;
@@ -160,17 +273,14 @@ BEGIN
         USING p_run_name;
     COMMIT;
 
+    -- ───────────────────────────────────────────
     -- フェーズ2: CDB$ROOT で LogMiner 起動・収集
+    -- ───────────────────────────────────────────
     go_to('CDB$ROOT');
 
     BEGIN
-        -- ★採掘窓は LW(mine_start) から開始。HW(last_commit) ではない。
-        --   LW は未コミットの最古Tx開始より前に保たれているため、baseline を跨ぐ
-        --   長時間Txの開始レコードも採掘窓に含まれ、COMMITTED_DATA_ONLY が正しく再構成できる。
         add_logfiles(v_mine_start);
 
-        -- ★G3: COMMITTED_DATA_ONLY を追加
-        --   コミット済みTxだけがコミット順で返る。ROLLBACK/未コミットは除外。
         DBMS_LOGMNR.START_LOGMNR(
             STARTSCN => v_mine_start,
             ENDSCN   => v_end_scn,
@@ -179,38 +289,74 @@ BEGIN
                       + DBMS_LOGMNR.COMMITTED_DATA_ONLY
         );
 
-        -- ★G2: COMMIT_SCN 基準で抽出。XID/seq_in_tx を付与。
+        -- ★Phase2: STATUS/OPERATION_CODE/CSF/INFO/RS_ID/SSN を追加取得
+        -- 注意: DICT_FROM_ONLINE_CATALOG 使用時、PDBの変更は CON_ID=1 として
+        --       報告されるため CON_ID フィルタは使わない（SEG_OWNER で一意）。
         FOR rec IN (
             SELECT COMMIT_SCN,
                    XID,
-                   SCN AS change_scn,
+                   SCN                AS change_scn,
                    ROW_NUMBER() OVER (
                        PARTITION BY XID ORDER BY SCN, RS_ID, SSN
-                   ) AS seq_in_tx,
-                   SEG_NAME AS table_name,
+                   )                  AS seq_in_tx,
+                   SEG_NAME           AS table_name,
                    OPERATION,
+                   OPERATION_CODE,
+                   STATUS             AS status_code,
+                   INFO               AS info_text,
+                   CSF,
+                   RS_ID,
+                   SSN,
                    DBMS_LOB.SUBSTR(SQL_REDO, 4000, 1) AS sql_redo_str
             FROM V$LOGMNR_CONTENTS
             WHERE SEG_OWNER  = 'SRC_SCHEMA'
-              -- ★全テーブル化: カタログの追跡対象テーブルに限定
               AND SEG_NAME   IN (SELECT column_value FROM TABLE(v_tables))
               AND OPERATION IN ('INSERT', 'UPDATE', 'DELETE')
-              -- 注意: DICT_FROM_ONLINE_CATALOG 使用時、PDBの変更は CON_ID=1 として
-              --       報告されるため CON_ID フィルタは使わない（SEG_OWNER で一意）。
               AND COMMIT_SCN > v_last_commit
               AND COMMIT_SCN <= v_end_scn
             ORDER BY COMMIT_SCN, XID, SCN, RS_ID, SSN
         ) LOOP
-            v_idx := v_idx + 1;
-            v_changes(v_idx).commit_scn := rec.COMMIT_SCN;
-            v_changes(v_idx).xid        := rec.XID;
-            v_changes(v_idx).change_scn := rec.change_scn;
-            v_changes(v_idx).seq_in_tx  := rec.seq_in_tx;
-            v_changes(v_idx).table_name := rec.table_name;
-            v_changes(v_idx).operation  := rec.OPERATION;
-            v_changes(v_idx).sql_redo   := rec.sql_redo_str;
-            IF rec.COMMIT_SCN > v_max_commit THEN
-                v_max_commit := rec.COMMIT_SCN;
+            IF v_in_csf THEN
+                -- ★CSF継続行: 前のエントリ(v_csf_target)の sql_redo_assembled に連結
+                v_changes(v_csf_target).sql_redo_assembled :=
+                    v_changes(v_csf_target).sql_redo_assembled || TO_CLOB(rec.sql_redo_str);
+                -- CSFフラグを最新行の値で更新（0=完結, 1=まだ続く）
+                v_changes(v_csf_target).csf := rec.CSF;
+                IF rec.CSF = 0 THEN
+                    v_in_csf := FALSE;  -- SQL連結完了
+                END IF;
+                -- 最大 COMMIT_SCN 追跡（継続行も同一TxなのでHW前進対象）
+                IF rec.COMMIT_SCN > v_max_commit THEN
+                    v_max_commit := rec.COMMIT_SCN;
+                END IF;
+            ELSE
+                -- 新しい論理的DML文の開始
+                v_idx := v_idx + 1;
+                v_changes(v_idx).commit_scn     := rec.COMMIT_SCN;
+                v_changes(v_idx).xid            := rec.XID;
+                v_changes(v_idx).change_scn     := rec.change_scn;
+                v_changes(v_idx).seq_in_tx      := rec.seq_in_tx;
+                v_changes(v_idx).table_name     := rec.table_name;
+                v_changes(v_idx).operation      := rec.OPERATION;
+                v_changes(v_idx).operation_code := rec.OPERATION_CODE;
+                v_changes(v_idx).status_code    := rec.status_code;
+                v_changes(v_idx).info_text      := rec.info_text;
+                v_changes(v_idx).csf            := rec.CSF;
+                v_changes(v_idx).rs_id          := rec.RS_ID;
+                v_changes(v_idx).ssn            := rec.SSN;
+                v_changes(v_idx).sql_redo       := rec.sql_redo_str;
+                -- sql_redo_assembled は最終的に CSF連結済みの完全SQLになる
+                v_changes(v_idx).sql_redo_assembled := TO_CLOB(rec.sql_redo_str);
+
+                IF rec.CSF = 1 THEN
+                    -- 次の行がこのSQL の継続
+                    v_in_csf     := TRUE;
+                    v_csf_target := v_idx;
+                END IF;
+
+                IF rec.COMMIT_SCN > v_max_commit THEN
+                    v_max_commit := rec.COMMIT_SCN;
+                END IF;
             END IF;
         END LOOP;
 
@@ -220,21 +366,23 @@ BEGIN
         RAISE;
     END;
 
-    -- フェーズ3: XEPDB1 に戻って delta_queue に INSERT
+    -- ───────────────────────────────────────────
+    -- フェーズ3: XEPDB1 に戻って分類 + delta_queue に INSERT
+    -- ───────────────────────────────────────────
     go_to('XEPDB1');
 
     i := v_changes.FIRST;
     WHILE i IS NOT NULL LOOP
-        -- PK 値を SQL_REDO から抽出（参照用ベストエフォート。delta_apply は SQL_REDO を直接 replay）。
-        -- ★全テーブル化: テーブルごとの PK 列名をカタログマップから引いて動的に抽出。
-        --   UPDATE/DELETE の WHERE 句形式 '"<PK>" = <数値>' のみ対応。
-        --   未登録テーブル・INSERT(VALUES形式)・非数値PKは NULL 許容。
+        -- ★Phase2: イベントを分類（replay_category / replay_allowed を決定）
+        classify_event(i);
+
+        -- PK 値を SQL_REDO から抽出（参照用ベストエフォート）
+        -- UPDATE/DELETE の WHERE句形式 '"PK" = <値>' のみ対応
         v_pk_val := NULL;
         BEGIN
             IF v_pk_map.EXISTS(v_changes(i).table_name) THEN
                 v_pk_col := v_pk_map(v_changes(i).table_name);
                 IF v_pk_col IS NOT NULL THEN
-                    -- LogMiner は数値PKも引用符付き（= '5'）で出力するため引用符をオプション化
                     v_pk_val := REGEXP_SUBSTR(
                         SUBSTR(v_changes(i).sql_redo, 1, 2000),
                         '"' || v_pk_col || '" = ''?(\d+)''?', 1, 1, NULL, 1);
@@ -242,15 +390,27 @@ BEGIN
             END IF;
         EXCEPTION WHEN OTHERS THEN v_pk_val := NULL; END;
 
+        -- delta_queue へ INSERT（★Phase2: 新カラムを含む）
         EXECUTE IMMEDIATE
             'INSERT INTO cdc_schema.delta_queue ' ||
             '(delta_id, commit_scn, xid, change_scn, seq_in_tx, ' ||
-            ' table_name, operation, sql_redo, pk_value) ' ||
-            'VALUES (cdc_schema.seq_delta_queue.NEXTVAL, :1, :2, :3, :4, :5, :6, :7, :8)'
-            USING v_changes(i).commit_scn, v_changes(i).xid,
-                  v_changes(i).change_scn, v_changes(i).seq_in_tx,
-                  v_changes(i).table_name, v_changes(i).operation,
-                  v_changes(i).sql_redo, v_pk_val;
+            ' table_name, operation, operation_code, status_code, info_text, ' ||
+            ' csf, rs_id, ssn, sql_redo, sql_redo_assembled, ' ||
+            ' replay_category, replay_allowed, fallback_required, fallback_reason, ' ||
+            ' pk_value) ' ||
+            'VALUES (cdc_schema.seq_delta_queue.NEXTVAL,' ||
+            ' :1,:2,:3,:4,:5, :6,:7,:8,:9,:10, :11,:12,:13,:14,:15,' ||
+            ' :16,:17,:18,:19, :20)'
+            USING v_changes(i).commit_scn,    v_changes(i).xid,
+                  v_changes(i).change_scn,    v_changes(i).seq_in_tx,
+                  v_changes(i).table_name,    v_changes(i).operation,
+                  v_changes(i).operation_code, v_changes(i).status_code,
+                  v_changes(i).info_text,     v_changes(i).csf,
+                  v_changes(i).rs_id,         v_changes(i).ssn,
+                  v_changes(i).sql_redo,      v_changes(i).sql_redo_assembled,
+                  v_changes(i).replay_category, v_changes(i).replay_allowed,
+                  v_changes(i).fallback_required, v_changes(i).fallback_reason,
+                  v_pk_val;
 
         v_extract_cnt := v_extract_cnt + 1;
         i := v_changes.NEXT(i);
@@ -258,19 +418,8 @@ BEGIN
 
     COMMIT;
 
-    -- ★進捗更新（HW/LW を別々に前進させる）
-    --
-    -- HW(last_extracted_commit_scn): commitフィルタの基準。
-    --   抽出が0件でも end_scn まで進めると、ENDSCN直前にコミットされた未完結Txを
-    --   取りこぼす恐れがあるため「実際に抽出した最大commit_scn」を採用する。
-    --   0件のときは v_end_scn まで進める（その範囲にコミットTxが無いことが確定）。
+    -- ★HW/LW 更新（Phase1 と同ロジック）
     v_next_hw := CASE WHEN v_extract_cnt > 0 THEN v_max_commit ELSE v_end_scn END;
-    --
-    -- LW(mine_start_scn): 次回の採掘開始点。未コミットの最古Tx開始(v_oldest_open)より
-    --   前に保つ。未コミットTxが無ければ HW 直後まで前進してよい。
-    --   LEAST により「オープンTxの開始」と「HW+1」のうち小さい方を採る。
-    --   ※ v_oldest_open は v_end_scn 時点のスナップショット。これより後に始まったTxは
-    --     START_SCN > v_end_scn なので次バッチの採掘窓に自然に含まれ、欠落しない。
     v_next_lw := LEAST(v_oldest_open, v_next_hw + 1);
 
     EXECUTE IMMEDIATE
@@ -309,5 +458,5 @@ END delta_extract;
 /
 SHOW ERRORS PROCEDURE SYS.delta_extract;
 
-PROMPT SYS.delta_extract (COMMIT_SCN version) created on oracle-src.
+PROMPT SYS.delta_extract (Phase2: SQL_REDO safety classification) created on oracle-src.
 EXIT;
