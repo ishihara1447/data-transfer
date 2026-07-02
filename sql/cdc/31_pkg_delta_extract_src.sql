@@ -15,6 +15,13 @@
 --   - ホワイトリスト登録済みかつ replay_category='A' → replay_allowed='Y'
 --   - ホワイトリスト: cdc_schema.redo_replay_whitelist (36_*.sql で管理)
 --
+-- ★LOB差分反映方式追加（docs/delta-extract-design.md セクション11.5）:
+--   - classify_event: replay_category='C' かつ operation='DELETE' の場合は
+--     replay_allowed='Y' として即時適用を許可（LOB本体不要・PK指定DELETEは安全）
+--   - ただし operation_code 92/93/94（LOB操作）や status_code≠0 は従来どおり 'N'
+--   - replay_category は 'C' のまま（分類は維持しつつ適用許可、という意味）
+--   - fallback_reason は NULL に（DELETEには LOBフォールバック不要）
+--
 -- アーキテクチャ:
 --   XEPDB1 読取  → cdc_schema.delta_extract_state (進捗)
 --   CDB$ROOT     → START_LOGMNR / V$LOGMNR_CONTENTS 収集
@@ -156,12 +163,22 @@ AS
                 'LOB_OPERATION_CODE=' || v_changes(p_idx).operation_code;
 
         ELSIF v_lob_pres = 'Y' THEN
-            -- C: テーブルにLOB列あり → SQL_REDO直接適用禁止
+            -- C: テーブルにLOB列あり → 原則 SQL_REDO直接適用禁止
             -- LOB本体はRedoとは別管理のため SQL_REDO で正確に再現できない
-            v_changes(p_idx).replay_category  := 'C';
-            v_changes(p_idx).replay_allowed    := 'N';
-            v_changes(p_idx).fallback_required := 'Y';
-            v_changes(p_idx).fallback_reason   := 'TABLE_HAS_LOB';
+            -- ★例外（11.5）: operation='DELETE' は LOB本体不要のため即時適用可。
+            --   replay_category は 'C' のまま（分類維持）・replay_allowedのみ 'Y' にする。
+            --   ただし LOB操作コード(92/93/94) や STATUS異常は例外から除外済み（上位節で捕捉済み）。
+            IF v_changes(p_idx).operation = 'DELETE' THEN
+                v_changes(p_idx).replay_category  := 'C';
+                v_changes(p_idx).replay_allowed    := 'Y';
+                v_changes(p_idx).fallback_required := 'N';
+                v_changes(p_idx).fallback_reason   := NULL;
+            ELSE
+                v_changes(p_idx).replay_category  := 'C';
+                v_changes(p_idx).replay_allowed    := 'N';
+                v_changes(p_idx).fallback_required := 'Y';
+                v_changes(p_idx).fallback_reason   := 'TABLE_HAS_LOB';
+            END IF;
 
         ELSIF v_cat = 'A' AND v_in_wl = 'Y' THEN
             -- A: 直接適用許可 (ホワイトリスト登録済み・LOBなし・STAGING同一構造)
@@ -391,6 +408,7 @@ BEGIN
         EXCEPTION WHEN OTHERS THEN v_pk_val := NULL; END;
 
         -- delta_queue へ INSERT（★Phase2: 新カラムを含む）
+        -- バインド変数: :1〜:19（19個）+ NEXTVAL = 20要素
         EXECUTE IMMEDIATE
             'INSERT INTO cdc_schema.delta_queue ' ||
             '(delta_id, commit_scn, xid, change_scn, seq_in_tx, ' ||
@@ -400,7 +418,7 @@ BEGIN
             ' pk_value) ' ||
             'VALUES (cdc_schema.seq_delta_queue.NEXTVAL,' ||
             ' :1,:2,:3,:4,:5, :6,:7,:8,:9,:10, :11,:12,:13,:14,:15,' ||
-            ' :16,:17,:18,:19, :20)'
+            ' :16,:17,:18,:19)'
             USING v_changes(i).commit_scn,    v_changes(i).xid,
                   v_changes(i).change_scn,    v_changes(i).seq_in_tx,
                   v_changes(i).table_name,    v_changes(i).operation,
@@ -458,5 +476,5 @@ END delta_extract;
 /
 SHOW ERRORS PROCEDURE SYS.delta_extract;
 
-PROMPT SYS.delta_extract (Phase2: SQL_REDO safety classification) created on oracle-src.
+PROMPT SYS.delta_extract (Phase2+LOB11: C-category DELETE immediate apply exception) created on oracle-src.
 EXIT;

@@ -140,6 +140,14 @@ BEGIN
     seed('initial_load_hours',      'UNDO',    '6',     1,    168,      'INT','DASHBOARD',
          '5TB初期ロードの想定所要時間(時間)。undo_retentionの目安算出に使用(参照値)。');
 
+    -- ---- CDC: LOBテーブル差分反映（周期的ターゲット再同期）の制御 ----
+    seed('lob_resync_interval_cycles', 'CDC',  '6',     1,    1000,     'INT','CDC',
+         'CDCサイクル(40)を何回まわすごとに LOB再同期サイクル(43)を起動するか。'
+         || '既定6=6サイクルに1回。小さいほど低遅延・高負荷(expdp/impdp往復コスト)。');
+    seed('lob_resync_pending_threshold', 'CDC','500',   1,    100000000,'INT','CDC',
+         'lob_resync_target の PENDING 件数がこれを超えたら周期を待たず即起動。'
+         || '既定500。大量LOB変更が発生した場合の遅延防止。');
+
     COMMIT;
 END;
 /

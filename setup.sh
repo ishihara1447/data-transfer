@@ -111,19 +111,21 @@ SRC_FILES=(
   "sql/cdc/13_cdc_schema.sql"              # CDC_SCHEMA 制御テーブル
   "sql/cdc/14_supplemental_logging.sql"    # ARCHIVELOG + 補足ログ（DB再起動を伴う）
   "sql/cdc/30_delta_queue_src.sql"         # delta_queue / 進捗状態
-  "sql/cdc/31_pkg_delta_extract_src.sql"   # SYS.delta_extract（LogMiner抽出）
   "sql/cdc/34_cdc_table_catalog.sql"       # 追跡対象テーブル・カタログ（LOB分類付き）
-  "sql/cdc/35_ops_config_src.sql"          # 運用パラメータ ops_config
+  "sql/cdc/35_ops_config_src.sql"          # 運用パラメータ ops_config（lob_resync設定含む）
   "sql/cdc/36_redo_replay_whitelist.sql"   # SQL_REDO直接適用ホワイトリスト
+  "sql/cdc/31_pkg_delta_extract_src.sql"   # SYS.delta_extract（LOB DELETE即時適用分岐含む）
+  "sql/cdc/39_lob_resync_src.sql"          # cdc_schema.lob_resync_request / SYS.lob_resync_export_rows
 )
 TGT_FILES=(
   "sql/cdc/20_staging_users_tgt.sql"       # STAGING_SCHEMA ユーザー（1.0ミラー受け皿）
   "sql/cdc/32_delta_queue_tgt.sql"         # staging_ctl + delta_queue + apply_ledger
-  "sql/cdc/37_delta_manual_review_queue.sql" # 手動調査キュー（replay_allowed='N'行の格納先）
+  "sql/cdc/37_delta_manual_review_queue.sql" # 手動調査キュー（pk_value列追加済み）
   "sql/transform/40_phase2_setup_tgt.sql"  # TARGET/LOG ユーザー + 各表 + 変換カタログ
   "sql/transform/41_pkg_transform_util.sql" # 共有変換関数
   "sql/transform/42_pkg_transform.sql"     # 変換オーケストレータ pkg_transform
-  "sql/cdc/33_pkg_delta_apply_tgt.sql"     # SYS.delta_apply（差分適用・replay_allowed判定）
+  "sql/cdc/38_lob_resync_tgt.sql"          # lob_resync_target / シャドウ表 / build_targets / merge
+  "sql/cdc/33_pkg_delta_apply_tgt.sql"     # SYS.delta_apply（pk_value伝播・C分類DELETE即時適用）
 )
 
 # ---- --plan: 実行せず手順だけ表示 ------------------------------------------

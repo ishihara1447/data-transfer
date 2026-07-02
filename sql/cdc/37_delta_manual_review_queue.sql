@@ -8,6 +8,11 @@
 --   - ホワイトリスト未登録 (replay_category='B')
 --   - LOB操作コード (OPERATION_CODE 92/93/94: LOB_WRITE/LOB_TRIM/LOB_ERASE)
 --
+-- ★LOB差分反映方式（11章）との連携:
+--   - pk_value: delta_queue.pk_value を伝播（LOB再同期要求のキー）
+--   - review_status='IN_REVIEW': lob_resync_build_targets が処理済みに更新
+--   - review_status='RESOLVED': lob_resync_merge が完了後に更新
+--
 -- 実行ユーザー: SYS AS SYSDBA / 実行対象: oracle-tgt XEPDB1 / Oracle 12c 互換 / 冪等
 
 WHENEVER SQLERROR EXIT SQL.SQLCODE
@@ -41,6 +46,8 @@ CREATE TABLE staging_ctl.delta_manual_review_queue (
     operation_code     NUMBER,
     status_code        NUMBER,
     info_text          VARCHAR2(4000),
+    -- ★LOBフォールバック用 PK値（delta_queue.pk_value を伝播）
+    pk_value           VARCHAR2(100),
     -- SQL（CSF連結済み）
     sql_redo_assembled CLOB,
     -- 分類結果（delta_extractが付与）
@@ -58,10 +65,7 @@ CREATE TABLE staging_ctl.delta_manual_review_queue (
         ('PENDING','IN_REVIEW','RESOLVED','IGNORED'))
 );
 
-COMMENT ON TABLE staging_ctl.delta_manual_review_queue IS
-    '自動適用できなかった差分イベントの手動調査キュー。'
-    || 'LOB(C)・STATUS異常(E)・ホワイトリスト未登録(B)等が対象。'
-    || 'LOBフォールバック(PK再取得/最終再同期)の作業記録にも使用する。';
+COMMENT ON TABLE staging_ctl.delta_manual_review_queue IS '自動適用できなかった差分イベントの手動調査キュー。LOB(C)・STATUS異常(E)・ホワイトリスト未登録(B)等が対象。LOBフォールバック(PK再取得/最終再同期)の作業記録にも使用する。pk_value はLOB差分反映（lob_resync_build_targets）が集約する際のキー。';
 
 CREATE INDEX staging_ctl.ix_manual_review_scn
     ON staging_ctl.delta_manual_review_queue (commit_scn);

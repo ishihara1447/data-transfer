@@ -83,6 +83,12 @@ SELECT 'CATALOG_ROW='||c.tgt_table_name||'|'||c.transform_class||'|'||NVL(TO_CHA
   WHERE c.is_active='Y' ORDER BY c.sort_order;
 SELECT 'RUNLOG_ROW='||run_id||'|'||run_name||'|'||NVL(run_mode,'-')||'|'||status||'|'||TO_CHAR(started_at,'MM-DD HH24:MI:SS')||'|'||NVL(TO_CHAR(tgt_count),'-')
   FROM (SELECT * FROM log_schema.migration_run_log ORDER BY run_id DESC) WHERE ROWNUM<=8;
+-- LOB再同期状況（11章）
+SELECT 'LOB_PENDING='||NVL(COUNT(*),0) FROM staging_ctl.lob_resync_target WHERE resync_status='PENDING';
+SELECT 'LOB_INTRANSIT='||NVL(COUNT(*),0) FROM staging_ctl.lob_resync_target WHERE resync_status='IN_TRANSIT';
+SELECT 'LOB_DONE='||NVL(COUNT(*),0) FROM staging_ctl.lob_resync_target WHERE resync_status='DONE';
+SELECT 'LOB_LAST_RESOLVED='||NVL(TO_CHAR(MAX(resolved_at),'MM-DD HH24:MI:SS'),'-') FROM staging_ctl.lob_resync_target WHERE resync_status='DONE';
+SELECT 'LOB_REVIEW_PENDING='||NVL(COUNT(*),0) FROM staging_ctl.delta_manual_review_queue WHERE review_status='PENDING' AND fallback_reason='TABLE_HAS_LOB';
 EXIT;
 EOF" 2>/dev/null)
 
@@ -162,6 +168,16 @@ RECON_ROWS="$(recon_row 地域 "$(gv SRC_REGIONS)"   "$(gv STG_REGIONS)"   "$(gv
 $(recon_row 顧客 "$(gv SRC_CUSTOMERS)" "$(gv STG_CUSTOMERS)" "$(gv TGT_CUSTOMERS)")
 $(recon_row 注文 "$(gv SRC_ORDERS)"    "$(gv STG_ORDERS)"    "$(gv TGT_ORDERS)")
 $(recon_derived "注文（拡張）" "$(gv TGT_ORDER_ENRICHED)" "$(gv TGT_ORDERS)")"
+
+# LOB再同期状況の整理
+LOB_PENDING=$(gv LOB_PENDING)
+LOB_INTRANSIT=$(gv LOB_INTRANSIT)
+LOB_DONE=$(gv LOB_DONE)
+LOB_LAST_RESOLVED=$(gs LOB_LAST_RESOLVED)
+LOB_REVIEW_PENDING=$(gv LOB_REVIEW_PENDING)
+LOB_STATUS_CLS="ok"
+if [ "${LOB_INTRANSIT:-0}" -gt 0 ] 2>/dev/null; then LOB_STATUS_CLS="warn"; fi
+if [ "${LOB_REVIEW_PENDING:-0}" -gt 100 ] 2>/dev/null; then LOB_STATUS_CLS="ng"; fi
 
 # 変換ルール表（テーブル名・種類を日本語化）
 CATALOG_ROWS=""
@@ -285,7 +301,19 @@ ${RUNLOG_ROWS}
 ${CATALOG_ROWS}
 </table>
 
-<h2>E. アーカイブログ / リドログ領域(FRA) の保持リスク（過去の変更をさかのぼれる範囲・空き）</h2>
+<h2>E. LOBテーブル差分再同期の状況</h2>
+<div class="cards">
+ <div class="card"><div class="k">再同期 待機中(PENDING)</div><div class="v">${LOB_PENDING}</div>
+   <div class="muted">scripts/43_lob_resync_cycle.sh を実行すると消化されます</div></div>
+ <div class="card"><div class="k">搬送中(IN_TRANSIT)</div><div class="v">${LOB_INTRANSIT}</div>
+   <div class="muted">前回のサイクルが途中で終了した行。0になっていれば正常</div></div>
+ <div class="card"><div class="k">再同期完了(DONE)</div><div class="v">${LOB_DONE}</div>
+   <div class="muted">最終完了: ${LOB_LAST_RESOLVED}</div></div>
+ <div class="card"><div class="k">手動キュー内 LOB待ち</div><div class="v">${LOB_REVIEW_PENDING}</div>
+   <div class="muted">review_queue で TABLE_HAS_LOB かつ PENDING な件数。lob_resync_build_targets で集約されます</div></div>
+</div>
+
+<h2>F. アーカイブログ / リドログ領域(FRA) の保持リスク（過去の変更をさかのぼれる範囲・空き）</h2>
 <div class="cards">
  <div class="card"><div class="k">いま残っている変更履歴ファイル数</div><div class="v">$(gv ARCH_COUNT)<span class="u">本</span></div>
    <div class="muted">削除されずに残っているアーカイブログ（変更履歴）の本数</div></div>
@@ -298,7 +326,7 @@ ${CATALOG_ROWS}
 </div>
 <p class="muted" style="margin-top:8px">【設定】警告のしきい値・反映の間隔（$(gv CFG_INTERVAL)秒）・変換のまとめ件数（$(gv CFG_BATCH)件）は <code>scripts/61_ops_config.sh</code> で変更できます。</p>
 
-<h2>F. 適用した変更（REDO）ログの確認 — 直近7日</h2>
+<h2>G. 適用した変更（REDO）ログの確認 — 直近7日</h2>
 <p class="muted" style="margin-top:-4px">日付ボタンを押すと、その日に移行先へ適用した変更（追加／更新／削除の SQL 全文）を別画面で開きます。画面内で絞り込み検索もできます。</p>
 <div class="btnrow">${REDO_BUTTONS}</div>
 

@@ -15,6 +15,12 @@
 --   - replay_allowed='N' 行のみのTxは 'MANUAL_REVIEW' として記録（再処理しない）
 --   - replay_allowed='Y'+'N' 混在Txは 'PARTIAL' として記録（Y行のみ適用・コミット）
 --
+-- ★LOB差分反映方式追加（docs/delta-extract-design.md セクション11）:
+--   - log_to_review_queue に pk_value 引数を追加し delta_queue.pk_value を伝播
+--   - replay_category='C' かつ operation='DELETE' は replay_allowed='Y' 相当として
+--     PK指定DELETE を STAGING_SCHEMA に即時実行（LOB本体は不要なので安全）
+--   - ただし operation_code 92/93/94（LOB操作）や status_code≠0 は従来どおり手動キュー行き
+--
 -- 冪等性ルール:
 --   - (xid, commit_scn) が apply_ledger にあれば適用済み → スキップ
 --   - 適用後に apply_ledger へ記録
@@ -66,6 +72,7 @@ AS
 
     -- manual_review_queue への記録: AUTONOMOUS_TRANSACTION で外部COMMIT
     -- メインTxのROLLBACKに巻き込まれないよう独立コミット
+    -- ★pk_value: delta_queue.pk_value を引き受けてキューに伝播（LOB再同期のキー）
     PROCEDURE log_to_review_queue(
         p_delta_id      NUMBER,
         p_commit_scn    NUMBER,
@@ -77,18 +84,21 @@ AS
         p_info_text     VARCHAR2,
         p_replay_cat    VARCHAR2,
         p_fallback_rsn  VARCHAR2,
-        p_sql_assembled CLOB
+        p_sql_assembled CLOB,
+        p_pk_value      VARCHAR2 DEFAULT NULL
     ) IS
         PRAGMA AUTONOMOUS_TRANSACTION;
     BEGIN
         INSERT INTO staging_ctl.delta_manual_review_queue
             (batch_delta_id, commit_scn, xid, seg_owner, seg_name,
              operation, operation_code, status_code, info_text,
+             pk_value,
              replay_category, fallback_reason, sql_redo_assembled)
         VALUES
             (p_delta_id, p_commit_scn, p_xid,
              'SRC_SCHEMA', p_table_name,
              p_operation, p_op_code, p_status_code, p_info_text,
+             p_pk_value,
              p_replay_cat, p_fallback_rsn, p_sql_assembled);
         COMMIT;
     EXCEPTION WHEN OTHERS THEN
@@ -167,7 +177,8 @@ BEGIN
         SELECT delta_id, commit_scn, xid, seq_in_tx,
                table_name, operation, operation_code, status_code, info_text,
                sql_redo, sql_redo_assembled,
-               replay_category, replay_allowed, fallback_reason
+               replay_category, replay_allowed, fallback_reason,
+               pk_value
         FROM staging_ctl.delta_queue
         WHERE commit_scn > v_last_commit
         ORDER BY commit_scn, xid, seq_in_tx
@@ -196,17 +207,33 @@ BEGIN
         END IF;
 
         -- ★Phase2: replay_allowed='N' のイベントは手動調査キューへ送る
+        -- ★LOB差分反映方式（11章）: replay_category='C' かつ operation='DELETE' は
+        --   即時適用可能（LOB本体不要・PK指定DELETEは安全）。
+        --   ただし LOB操作コード(92/93/94) や STATUS異常（status_code≠0）は従来どおり手動キュー行き。
         IF NVL(rec.replay_allowed, 'N') != 'Y' THEN
-            log_to_review_queue(
-                rec.delta_id, rec.commit_scn, rec.xid,
-                rec.table_name, rec.operation,
-                rec.operation_code, rec.status_code, rec.info_text,
-                rec.replay_category, rec.fallback_reason,
-                rec.sql_redo_assembled
-            );
-            v_cur_review  := v_cur_review + 1;
-            v_review_events := v_review_events + 1;
-            CONTINUE;
+            -- C分類DELETEの例外: replay_allowedをYとして即時適用させる
+            IF rec.replay_category = 'C'
+               AND rec.operation = 'DELETE'
+               AND NVL(rec.operation_code, 0) NOT IN (92, 93, 94)
+               AND NVL(rec.status_code, 0) = 0
+            THEN
+                -- DELETEはLOB本体不要。replay_allowedをYとして通常のEXECUTE IMMEDIATE経路へ
+                -- (fallback_reasonはNULL・replay_categoryはCのまま)
+                NULL;  -- フォールスルー（下のreplay_allowed='Y'処理に進む）
+            ELSE
+                -- 通常の手動キュー行き（LOB INSERT/UPDATE、操作コード92/93/94、STATUS異常等）
+                log_to_review_queue(
+                    rec.delta_id, rec.commit_scn, rec.xid,
+                    rec.table_name, rec.operation,
+                    rec.operation_code, rec.status_code, rec.info_text,
+                    rec.replay_category, rec.fallback_reason,
+                    rec.sql_redo_assembled,
+                    rec.pk_value
+                );
+                v_cur_review  := v_cur_review + 1;
+                v_review_events := v_review_events + 1;
+                CONTINUE;
+            END IF;
         END IF;
 
         -- replay_allowed='Y': STAGING_SCHEMA へ適用
@@ -275,5 +302,5 @@ END delta_apply;
 /
 SHOW ERRORS PROCEDURE SYS.delta_apply;
 
-PROMPT SYS.delta_apply (Phase2: replay_allowed check + manual review routing) created on oracle-tgt.
+PROMPT SYS.delta_apply (Phase2+LOB11: pk_value propagation + C-category DELETE immediate apply) created on oracle-tgt.
 EXIT;
