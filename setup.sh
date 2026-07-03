@@ -117,6 +117,7 @@ SRC_FILES=(
   "sql/cdc/31_pkg_delta_extract_src.sql"   # SYS.delta_extract（LOB DELETE即時適用分岐含む）
   "sql/cdc/39_lob_resync_src.sql"          # cdc_schema.lob_resync_request / SYS.lob_resync_export_rows
   "sql/cdc/45_pkg_delta_purge_src.sql"     # SYS.delta_purge_src（delta_queue パージ）
+  "sql/cdc/47_pkg_archive_gap_src.sql"     # SYS.archive_gap_check（アーカイブ連番欠落チェック）
 )
 TGT_FILES=(
   "sql/cdc/20_staging_users_tgt.sql"       # STAGING_SCHEMA ユーザー（1.0ミラー受け皿）

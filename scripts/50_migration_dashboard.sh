@@ -21,6 +21,34 @@ GEN_AT=$(date '+%Y-%m-%d %H:%M:%S')
 META_REFRESH=""
 [ "${REFRESH}" -gt 0 ] 2>/dev/null && META_REFRESH="<meta http-equiv=\"refresh\" content=\"${REFRESH}\">"
 
+# ---- archive_gap_check サマリ照会（SRC 照会より前に実行してパース済みの値を用意）----
+# PL/SQL の DBMS_OUTPUT から1行サマリを取得する。
+# SET SERVEROUTPUT ON は ALTER SESSION より後に置く必要があるため CDB$ROOT で直接実行。
+ARCH_GAP_RAW=$(docker exec -u oracle ${SRC} bash -c "sqlplus -S '/ as sysdba' <<'EOF'
+SET PAGESIZE 0 FEEDBACK OFF HEADING OFF TRIMSPOOL ON LINESIZE 500
+SET SERVEROUTPUT ON SIZE UNLIMITED
+EXEC SYS.archive_gap_check(p_run_name => '${RUN}', p_verbose => 'N')
+EXIT;
+EOF" 2>/dev/null)
+ARCH_GAP_SUMMARY=$(echo "${ARCH_GAP_RAW}" | grep -E '^ARCHIVE_GAP:' | head -1)
+
+# サマリ行から各フィールドを抽出
+ARCH_GAP_STATUS=$(echo "${ARCH_GAP_SUMMARY}" | grep -oE 'status=(OK|WARN|CRIT)' | cut -d= -f2)
+ARCH_GAP_NEEDED=$(echo "${ARCH_GAP_SUMMARY}" | grep -oE 'needed_scn=[0-9]+' | cut -d= -f2)
+ARCH_GAP_MISSING=$(echo "${ARCH_GAP_SUMMARY}" | grep -oE 'missing_needed=[0-9]+' | cut -d= -f2)
+ARCH_GAP_GAPS_TOT=$(echo "${ARCH_GAP_SUMMARY}" | grep -oE 'seq_gaps_total=[0-9]+' | cut -d= -f2)
+ARCH_GAP_GAPS_IN=$(echo "${ARCH_GAP_SUMMARY}" | grep -oE 'seq_gaps_in_needed=[0-9]+' | cut -d= -f2)
+ARCH_GAP_OLDEST=$(echo "${ARCH_GAP_SUMMARY}" | grep -oE 'oldest_avail_scn=[0-9]+' | cut -d= -f2)
+
+# status → CSS クラス・日本語ラベル（fcls と同じ ok/warn/ng）
+case "${ARCH_GAP_STATUS:-}" in
+  OK)   ARCH_GAP_CLS="ok"   ;;
+  WARN) ARCH_GAP_CLS="warn" ;;
+  CRIT) ARCH_GAP_CLS="ng"   ;;
+  *)    ARCH_GAP_CLS="muted";;
+esac
+ARCH_GAP_LABEL=$(case "${ARCH_GAP_STATUS:-}" in OK) echo "正常";; WARN) echo "警告";; CRIT) echo "危険";; *) echo "—";; esac)
+
 # ---- SRC 照会 ----
 SRC_RAW=$(docker exec -u oracle ${SRC} bash -c "sqlplus -S '/ as sysdba' <<'EOF'
 SET PAGESIZE 0 FEEDBACK OFF HEADING OFF TRIMSPOOL ON LINESIZE 200
@@ -324,6 +352,23 @@ ${CATALOG_ROWS}
    <div class="muted">$([ "${FRA_PCT}" = "NA" ] && echo "FRA未設定" || echo "${FRA_USED}/${FRA_LIMIT} MB ｜ 警告:$(gv CFG_FRA_WARN)% / 危険:$(gv CFG_FRA_CRIT)%")</div></div>
  <div class="card"><div class="k">最古 → 最新</div><div class="v" style="font-size:14px">$(gs ARCH_OLDEST) → $(gs ARCH_NEWEST)</div></div>
 </div>
+
+<h2>F2. アーカイブログ連番欠落（CDC再開不能リスク）</h2>
+<div class="cards">
+ <div class="card"><div class="k">連番欠落チェック <span class="badge ${ARCH_GAP_CLS}">${ARCH_GAP_LABEL}</span></div>
+   <div class="v" style="font-size:17px">${ARCH_GAP_STATUS:-—}</div>
+   <div class="muted">危険=CDC再開不能の可能性。警告=範囲外に欠番あり。正常=問題なし。</div></div>
+ <div class="card"><div class="k">必要範囲内で削除済みのログ本数</div>
+   <div class="v">${ARCH_GAP_MISSING:-—}<span class="u">本</span></div>
+   <div class="muted">0以外 = CDC再開不能（mine_start_scn 以降のアーカイブが消えている）</div></div>
+ <div class="card"><div class="k">連番欠番（必要範囲内）</div>
+   <div class="v">${ARCH_GAP_GAPS_IN:-—}<span class="u">件</span></div>
+   <div class="muted">SEQUENCE# の飛びが必要範囲に掛かる数。0以外は重大。全体欠番: ${ARCH_GAP_GAPS_TOT:-—} 件</div></div>
+ <div class="card"><div class="k">現存最古SCN vs 必要SCN（LW）</div>
+   <div class="v" style="font-size:13px">${ARCH_GAP_OLDEST:-—}</div>
+   <div class="muted">現存最古 FIRST_CHANGE#。これが needed_scn(${ARCH_GAP_NEEDED:-—}) より大きいと危険（必要範囲の頭が消えている）</div></div>
+</div>
+<p class="muted" style="margin-top:8px">【確認】詳細: <code>bash scripts/47_archive_gap_check.sh --verbose</code>　|　連番欠落チェック単体: <code>bash scripts/47_archive_gap_check.sh</code></p>
 <p class="muted" style="margin-top:8px">【設定】警告のしきい値・反映の間隔（$(gv CFG_INTERVAL)秒）・変換のまとめ件数（$(gv CFG_BATCH)件）は <code>scripts/61_ops_config.sh</code> で変更できます。</p>
 
 <h2>G. 適用した変更（REDO）ログの確認 — 直近7日</h2>
