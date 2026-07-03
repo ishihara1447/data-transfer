@@ -112,15 +112,17 @@ SRC_FILES=(
   "sql/cdc/14_supplemental_logging.sql"    # ARCHIVELOG + 補足ログ（DB再起動を伴う）
   "sql/cdc/30_delta_queue_src.sql"         # delta_queue / 進捗状態
   "sql/cdc/34_cdc_table_catalog.sql"       # 追跡対象テーブル・カタログ（LOB分類付き）
-  "sql/cdc/35_ops_config_src.sql"          # 運用パラメータ ops_config（lob_resync設定含む）
+  "sql/cdc/35_ops_config_src.sql"          # 運用パラメータ ops_config（purge設定含む）
   "sql/cdc/36_redo_replay_whitelist.sql"   # SQL_REDO直接適用ホワイトリスト
   "sql/cdc/31_pkg_delta_extract_src.sql"   # SYS.delta_extract（LOB DELETE即時適用分岐含む）
   "sql/cdc/39_lob_resync_src.sql"          # cdc_schema.lob_resync_request / SYS.lob_resync_export_rows
+  "sql/cdc/45_pkg_delta_purge_src.sql"     # SYS.delta_purge_src（delta_queue パージ）
 )
 TGT_FILES=(
   "sql/cdc/20_staging_users_tgt.sql"       # STAGING_SCHEMA ユーザー（1.0ミラー受け皿）
   "sql/cdc/32_delta_queue_tgt.sql"         # staging_ctl + delta_queue + apply_ledger
   "sql/cdc/37_delta_manual_review_queue.sql" # 手動調査キュー（pk_value列追加済み）
+  "sql/cdc/46_pkg_delta_purge_tgt.sql"     # SYS.delta_purge_tgt（delta_queue パージ）
   "sql/transform/40_phase2_setup_tgt.sql"  # TARGET/LOG ユーザー + 各表 + 変換カタログ
   "sql/transform/41_pkg_transform_util.sql" # 共有変換関数
   "sql/transform/42_pkg_transform.sql"     # 変換オーケストレータ pkg_transform

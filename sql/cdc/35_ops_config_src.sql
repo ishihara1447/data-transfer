@@ -148,6 +148,19 @@ BEGIN
          'lob_resync_target の PENDING 件数がこれを超えたら周期を待たず即起動。'
          || '既定500。大量LOB変更が発生した場合の遅延防止。');
 
+    -- ---- CDC: delta_queue パージ運用の制御 ----
+    seed('delta_purge_enabled',         'CDC',  'N',    NULL, NULL,     'INT','CDC',
+         'delta_queue パージを有効にするか。N=無効(dry_run相当)、Y=実削除。'
+         || '安全側のデフォルト=N。運用者が明示的にYに変更したときのみ実削除する。'
+         || '変更: bash scripts/61_ops_config.sh set delta_purge_enabled Y');
+    seed('delta_purge_retention_min',   'CDC',  '60',   1,    10080,    'INT','CDC',
+         'delta_queue パージの保持マージン(分)。'
+         || '適用済みでもこの分数より新しい行は削除しない（トラブル調査・直近データ保護）。'
+         || '既定60分。継続CDCでは直近1サイクル分のデータが確実に残る設定が推奨。');
+    seed('delta_purge_interval_cycles', 'CDC',  '20',   1,    10000,    'INT','CDC',
+         'CDCデーモン(41)が何サイクルごとにパージサイクル(45)を起動するか。'
+         || '既定20。大きいほど起動頻度が低くなる（パージはDBに負荷をかけないが頻繁すぎも避ける）。');
+
     COMMIT;
 END;
 /

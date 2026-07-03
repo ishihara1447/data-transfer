@@ -8,6 +8,12 @@
 #   - lob_resync_pending_threshold (既定500): PENDING件数がこれを超えたら即起動
 #   40_cdc_cycle.sh 自体は変更しない。
 #
+# ★delta_queue パージサイクル統合:
+#   scripts/45_purge_cycle.sh を ops_config の設定に基づいて周期起動する。
+#   - delta_purge_interval_cycles (既定20): N サイクルに1回 45 を起動
+#   - delta_purge_enabled (既定'N'): 'Y' のときのみ実削除。'N' は dry_run のみ
+#   40_cdc_cycle.sh 自体は変更しない。
+#
 # 使い方:
 #   bash scripts/41_cdc_daemon.sh [間隔秒] [最大反復回数(0=無限)]
 #   例: bash scripts/41_cdc_daemon.sh 10 0     # 10秒間隔で無限
@@ -47,7 +53,8 @@ echo "=============================================="
 trap 'echo ""; echo "デーモン停止"; exit 0' INT TERM
 
 i=0
-lob_cycle_count=0  # 最後に LOB再同期を起動してからのサイクル数
+lob_cycle_count=0    # 最後に LOB再同期を起動してからのサイクル数
+purge_cycle_count=0  # 最後にパージサイクルを起動してからのサイクル数
 
 while true; do
     i=$((i+1))
@@ -84,6 +91,17 @@ SQLEOF" 2>/dev/null | grep -oE '[0-9]+' | tail -1) || true
         bash ${ROOT}/scripts/43_lob_resync_cycle.sh || true
     fi
     # ---- LOB再同期判定ここまで ----
+
+    # ---- delta_queue パージサイクル起動判定 ----
+    PURGE_INTERVAL=$(cfg_int delta_purge_interval_cycles 20)
+    purge_cycle_count=$((purge_cycle_count + 1))
+
+    if [ "${purge_cycle_count}" -ge "${PURGE_INTERVAL}" ]; then
+        echo "  [パージ] delta_queue パージサイクル起動 (cycle_count=${i})"
+        bash ${ROOT}/scripts/45_purge_cycle.sh || true
+        purge_cycle_count=0
+    fi
+    # ---- パージ判定ここまで ----
 
     if [ "${MAX_ITER}" -ne 0 ] && [ "${i}" -ge "${MAX_ITER}" ]; then
         echo "最大反復 ${MAX_ITER} 到達。停止。"
