@@ -118,6 +118,7 @@ SRC_FILES=(
   "sql/cdc/39_lob_resync_src.sql"          # cdc_schema.lob_resync_request / SYS.lob_resync_export_rows
   "sql/cdc/45_pkg_delta_purge_src.sql"     # SYS.delta_purge_src（delta_queue パージ）
   "sql/cdc/47_pkg_archive_gap_src.sql"     # SYS.archive_gap_check（アーカイブ連番欠落チェック）
+  "sql/cdc/48_pkg_verify_content_src.sql"  # SYS.verify_content_src（内容検証 2a-src）
 )
 TGT_FILES=(
   "sql/cdc/20_staging_users_tgt.sql"       # STAGING_SCHEMA ユーザー（1.0ミラー受け皿）
@@ -129,6 +130,7 @@ TGT_FILES=(
   "sql/transform/42_pkg_transform.sql"     # 変換オーケストレータ pkg_transform
   "sql/cdc/38_lob_resync_tgt.sql"          # lob_resync_target / シャドウ表 / build_targets / merge
   "sql/cdc/33_pkg_delta_apply_tgt.sql"     # SYS.delta_apply（pk_value伝播・C分類DELETE即時適用）
+  "sql/cdc/49_pkg_verify_content_tgt.sql"  # SYS.verify_content_stg / verify_business_aggregates / verify_row_counts_tgt（内容検証 2a-tgt/2b/段階1）
 )
 
 # ---- --plan: 実行せず手順だけ表示 ------------------------------------------

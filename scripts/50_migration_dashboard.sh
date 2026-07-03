@@ -120,6 +120,59 @@ SELECT 'LOB_REVIEW_PENDING='||NVL(COUNT(*),0) FROM staging_ctl.delta_manual_revi
 EXIT;
 EOF" 2>/dev/null)
 
+# ---- 内容検証 サマリ照会（重いため最後に実行した結果のみ表示・過負荷回避）----
+# verify_row_counts_tgt を呼んで ROWCOUNT_TGT 行を取得する（行数突き合わせの簡易表示）。
+# verify_business_aggregates / verify_content_stg は本スクリプト内での毎回実行はしない
+# （重いため）。代わりに 49_two_stage_verify.sh を手動実行した際の BIZAGG 行を
+# ダッシュボード生成時刻に直近のキャッシュとして表示する簡易実装とする。
+# ここでは BIZAGG は verify_business_aggregates を直接呼んで PASS/FAIL を集計する。
+CONTENT_VERIFY_RAW=$(docker exec -u oracle ${TGT} bash -c "sqlplus -S '/ as sysdba' <<'EOF'
+SET PAGESIZE 0 FEEDBACK OFF HEADING OFF TRIMSPOOL ON LINESIZE 600
+ALTER SESSION SET CONTAINER = XEPDB1;
+SET SERVEROUTPUT ON SIZE UNLIMITED
+EXEC SYS.verify_row_counts_tgt(p_verbose => 'N')
+EXEC SYS.verify_business_aggregates(p_verbose => 'N')
+EXIT;
+EOF" 2>/dev/null)
+
+# BIZAGG 集計
+BIZAGG_PASS_COUNT=$(echo "${CONTENT_VERIFY_RAW}" | grep -c 'result=PASS' || echo "0")
+BIZAGG_FAIL_COUNT=$(echo "${CONTENT_VERIFY_RAW}" | grep -c 'result=FAIL' || echo "0")
+BIZAGG_PASS_COUNT="${BIZAGG_PASS_COUNT:-0}"
+BIZAGG_FAIL_COUNT="${BIZAGG_FAIL_COUNT:-0}"
+
+# 総合判定（ダッシュボード表示用）
+if [ "${BIZAGG_FAIL_COUNT}" = "0" ] && [ "${BIZAGG_PASS_COUNT}" -gt 0 ] 2>/dev/null; then
+    CONTENT_STATUS="全PASS"; CONTENT_CLS="ok"
+elif [ "${BIZAGG_FAIL_COUNT}" -gt 0 ] 2>/dev/null; then
+    CONTENT_STATUS="FAIL ${BIZAGG_FAIL_COUNT}件"; CONTENT_CLS="ng"
+else
+    CONTENT_STATUS="未実行"; CONTENT_CLS="muted"
+fi
+
+# BIZAGG 行テーブル用 HTML
+BIZAGG_ROWS=""
+while IFS= read -r line; do
+    chk=$(echo "${line}" | grep -oE 'check=[^ ]+' | cut -d= -f2)
+    res=$(echo "${line}" | grep -oE 'result=(PASS|FAIL)' | cut -d= -f2)
+    det=$(echo "${line}" | sed 's/.*detail=//' | head -c 120)
+    [ -z "${chk}" ] && continue
+    rcls="ok"; [ "${res}" != "PASS" ] && rcls="ng"
+    BIZAGG_ROWS+="<tr><td>${chk}</td><td class=\"badge ${rcls}\">${res:-?}</td><td class=muted>${det}</td></tr>"
+done < <(echo "${CONTENT_VERIFY_RAW}" | grep "^BIZAGG:")
+
+# ROWCOUNT_TGT 行テーブル用 HTML (段階1 STG↔TGT 行数)
+ROWCOUNT_ROWS=""
+while IFS= read -r line; do
+    tbl=$(echo "${line}" | grep -oE 'table=[^ ]+' | cut -d= -f2)
+    stg=$(echo "${line}" | grep -oE 'stg=[^ ]+' | cut -d= -f2)
+    tgt=$(echo "${line}" | grep -oE 'tgt=[^ ]+' | cut -d= -f2)
+    mat=$(echo "${line}" | grep -oE 'match=[YN]' | cut -d= -f2)
+    [ -z "${tbl}" ] && continue
+    mcls="ok"; [ "${mat}" != "Y" ] && mcls="ng"
+    ROWCOUNT_ROWS+="<tr><td>${tbl}</td><td class=num>${stg}</td><td class=num>${tgt}</td><td class=\"badge ${mcls}\">${mat:-?}</td></tr>"
+done < <(echo "${CONTENT_VERIFY_RAW}" | grep "^ROWCOUNT_TGT:")
+
 # ---- パース ----
 declare -A M
 while IFS='=' read -r k v; do [ -n "$k" ] && M[$k]="$v"; done < <(printf '%s\n%s\n' "${SRC_RAW}" "${TGT_RAW}" | grep -E '^[A-Z_]+=' | grep -vE '^(CATALOG_ROW|RUNLOG_ROW)=')
@@ -310,6 +363,26 @@ ${META_REFRESH}
 <table><tr><th>テーブル</th><th class=num>移行元1.0</th><th class=num>移行先1.0</th><th class=num>移行先2.0</th><th>判定</th></tr>
 ${RECON_ROWS}
 </table>
+<p class="muted" style="margin-top:6px">※ 継続DMLが走っているため、移行元1.0と移行先1.0(STAGING)は追いかけ途中に一時的な不一致が生じます。継続的に数件差がある場合はCDCサイクルを確認してください。</p>
+
+<h2>B2. 内容検証（ハッシュ・業務集計）</h2>
+<div class="cards">
+ <div class="card"><div class="k">業務集計照合 総合判定 <span class="badge ${CONTENT_CLS}">${CONTENT_STATUS}</span></div>
+   <div class="v" style="font-size:14px">PASS ${BIZAGG_PASS_COUNT} / FAIL ${BIZAGG_FAIL_COUNT}</div>
+   <div class="muted">継続DMLで一時的に不一致になり得る（件数不一致時）。詳細は下表参照。</div></div>
+ <div class="card"><div class="k">詳細実行コマンド</div>
+   <div class="muted" style="margin-top:8px">ハッシュ照合を含む完全検証:<br><code>bash scripts/49_two_stage_verify.sh</code></div>
+   <div class="muted" style="margin-top:4px">LOB検証は先頭2000byte/charのみ（完全一致保証ではない）</div></div>
+</div>
+<h2 style="font-size:12px;border:none;color:#94a3b8;margin:10px 0 4px">段階1 行数突き合わせ (STAGING ↔ TARGET)</h2>
+<table><tr><th>テーブル</th><th class=num>STAGING(1.0)</th><th class=num>TARGET(2.0)</th><th>一致</th></tr>
+${ROWCOUNT_ROWS}
+</table>
+<h2 style="font-size:12px;border:none;color:#94a3b8;margin:10px 0 4px">段階2b 業務集計照合 (STAGING↔TARGET 不変量)</h2>
+<table><tr><th>チェック名</th><th>判定</th><th class=muted>詳細</th></tr>
+${BIZAGG_ROWS}
+</table>
+<p class="muted" style="margin-top:6px">【未検査項目】lead_time_days精度 / phone_normalized / postal_code-prefecture-city(REGEXP) / status_label(code_mapping) / LOB完全ハッシュ(SRC↔STG照合は scripts/49_ のみ)</p>
 
 <h2>C. 連携処理の健全性</h2>
 <div class="cards">
