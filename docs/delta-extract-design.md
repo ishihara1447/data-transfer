@@ -373,6 +373,11 @@ CUSTOMERS / ORDERS の STAGING への差分反映は、**周期的ターゲッ�
 > 差分が [9章](#9-sql_redo-再生可能性の制約と安全な適用方式phase2-設計原則) の安全設計により
 > `delta_manual_review_queue` に退避されたまま STAGING_SCHEMA に反映されない問題を解消した。
 > 検証は `scripts/44_test_lob_resync_e2e.sh`（LOB本体一致・RESOLVED/DONE遷移・DELETE即時反映を確認）。
+>
+> **追記（2026-07-04）**: 本章はSRC→STAGINGまでの反映を扱う。STAGING→TARGET側のLOBパススルー
+> （transform層 pkg_transform）も実装済み・E2E全PASS。設計・実装ファイルは
+> `docs/phase2-transform-design.md` 10章#13、検証は `scripts/54_test_lob_passthrough_e2e.sh`。
+> これによりG13（LOBテーブルの自動差分反映）はSRC→STAGING→TARGETの鎖全体で解消済み。
 
 ### 11.1 方式の選定：A/Bを統合し「周期的ターゲット再同期」を基本方式とする
 

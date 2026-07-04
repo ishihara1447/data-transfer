@@ -207,6 +207,9 @@ CREATE TABLE target_schema.customers (
     status            VARCHAR2(20)  NOT NULL,
     is_active         CHAR(1)       NOT NULL,
     created_date      DATE,
+    -- ★G13 LOBパススルー列（無変換でSTAGING→TARGETに引き継ぐ。内容変換は業務ルール未定義のためスコープ外）
+    avatar_image      BLOB,
+    remarks           CLOB,
     CONSTRAINT pk_tgt_customers PRIMARY KEY (customer_id),
     CONSTRAINT ck_tgt_cust_active CHECK (is_active IN ('Y','N'))
 );
@@ -224,6 +227,8 @@ CREATE TABLE target_schema.orders (
     total_amount        NUMBER(15,2)  NOT NULL,
     tax_amount          NUMBER(15,2)  NOT NULL,
     net_amount          NUMBER(15,2)  NOT NULL,
+    -- ★G13 LOBパススルー列（無変換でSTAGING→TARGETに引き継ぐ。内容変換は業務ルール未定義のためスコープ外）
+    shipping_address    CLOB,
     CONSTRAINT pk_tgt_orders PRIMARY KEY (order_id),
     CONSTRAINT fk_tgt_orders_cust FOREIGN KEY (customer_id)
         REFERENCES target_schema.customers (customer_id)

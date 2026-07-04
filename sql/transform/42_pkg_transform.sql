@@ -224,9 +224,12 @@ CREATE OR REPLACE PACKAGE BODY log_schema.pkg_transform AS
         log_step(p_run_id, 'TRANSFORM_CUSTOMERS', 'RUNNING', v_src, 0);
 
         IF p_mode = C_MODE_INITIAL THEN
+            -- ★G13 LOBパススルー: avatar_image/remarks を STAGING から TARGET へ無変換で引き継ぐ
+            --   内容変換は業務ルール未定義のためスコープ外。SRC→(LOB再同期)→STAGING→(ここ)→TARGET
             INSERT INTO target_schema.customers
                 (customer_id, customer_code, full_name, display_name, email,
-                 phone_normalized, region_id, credit_limit, status, is_active, created_date)
+                 phone_normalized, region_id, credit_limit, status, is_active, created_date,
+                 avatar_image, remarks)
             SELECT s.customer_id, s.customer_code,
                    s.last_name || ' ' || s.first_name,
                    COALESCE(s.company_name, s.last_name || ' ' || s.first_name),
@@ -234,9 +237,16 @@ CREATE OR REPLACE PACKAGE BODY log_schema.pkg_transform AS
                    log_schema.pkg_transform_util.normalize_phone(s.phone),
                    s.region_id, s.credit_limit, s.status,
                    log_schema.pkg_transform_util.status_to_active_flag(s.status),
-                   CAST(s.created_at AS DATE)
+                   CAST(s.created_at AS DATE),
+                   s.avatar_image, s.remarks
             FROM staging_schema.customers s;
         ELSE
+            -- ★G13 LOBパススルー: USING句では直接LOBを参照できないため、
+            --   スカラ変換と LOB パススルーを別々の操作で実装する。
+            --   (1) スカラ列の MERGE（既存動作を維持）
+            --   (2) WHEN MATCHED の UPDATE SET にLOB列を追加
+            --   NOTE: MERGE の USING 副問合わせでは LOB 列をスカラとして射影できるが、
+            --         同一DBのMERGEなので直接 src.avatar_image / src.remarks を参照可能。
             MERGE INTO target_schema.customers t
             USING (
                 SELECT s.customer_id, s.customer_code,
@@ -246,7 +256,8 @@ CREATE OR REPLACE PACKAGE BODY log_schema.pkg_transform AS
                        log_schema.pkg_transform_util.normalize_phone(s.phone) AS phone_normalized,
                        s.region_id, s.credit_limit, s.status,
                        log_schema.pkg_transform_util.status_to_active_flag(s.status) AS is_active,
-                       CAST(s.created_at AS DATE) AS created_date
+                       CAST(s.created_at AS DATE) AS created_date,
+                       s.avatar_image, s.remarks
                 FROM staging_schema.customers s
                 WHERE s.synced_at > p_last
                   AND s.synced_at <= p_snap
@@ -257,13 +268,17 @@ CREATE OR REPLACE PACKAGE BODY log_schema.pkg_transform AS
                 t.display_name=src.display_name, t.email=src.email,
                 t.phone_normalized=src.phone_normalized, t.region_id=src.region_id,
                 t.credit_limit=src.credit_limit, t.status=src.status,
-                t.is_active=src.is_active, t.created_date=src.created_date
+                t.is_active=src.is_active, t.created_date=src.created_date,
+                -- ★G13 LOBパススルー
+                t.avatar_image=src.avatar_image, t.remarks=src.remarks
             WHEN NOT MATCHED THEN INSERT
                 (customer_id, customer_code, full_name, display_name, email,
-                 phone_normalized, region_id, credit_limit, status, is_active, created_date)
+                 phone_normalized, region_id, credit_limit, status, is_active, created_date,
+                 avatar_image, remarks)
                 VALUES (src.customer_id, src.customer_code, src.full_name, src.display_name,
                         src.email, src.phone_normalized, src.region_id, src.credit_limit,
-                        src.status, src.is_active, src.created_date);
+                        src.status, src.is_active, src.created_date,
+                        src.avatar_image, src.remarks);
         END IF;
 
         SELECT COUNT(*) INTO v_tgt FROM target_schema.customers;
@@ -281,16 +296,20 @@ CREATE OR REPLACE PACKAGE BODY log_schema.pkg_transform AS
         log_step(p_run_id, 'TRANSFORM_ORDERS', 'RUNNING', v_src, 0);
 
         IF p_mode = C_MODE_INITIAL THEN
+            -- ★G13 LOBパススルー: shipping_address を STAGING から TARGET へ無変換で引き継ぐ
+            --   内容変換は業務ルール未定義のためスコープ外。SRC→(LOB再同期)→STAGING→(ここ)→TARGET
+            --   order_enriched への postal_code/prefecture/city 抽出（42_）は別ルートで維持。
             INSERT INTO target_schema.orders
                 (order_id, order_no, customer_id, shipping_region_id, order_status,
                  order_date, ship_date, delivery_date, lead_time_days,
-                 total_amount, tax_amount, net_amount)
+                 total_amount, tax_amount, net_amount, shipping_address)
             SELECT s.order_id, s.order_no, s.customer_id, s.shipping_region_id,
                    log_schema.pkg_transform_util.validate_order_status(s.status),
                    s.order_date, s.ship_date, s.delivery_date,
                    CASE WHEN s.delivery_date IS NOT NULL
                         THEN TRUNC(s.delivery_date) - TRUNC(s.order_date) END,
-                   s.total_amount, s.tax_amount, s.total_amount - s.tax_amount
+                   s.total_amount, s.tax_amount, s.total_amount - s.tax_amount,
+                   s.shipping_address
             FROM staging_schema.orders s;
         ELSE
             MERGE INTO target_schema.orders t
@@ -300,7 +319,8 @@ CREATE OR REPLACE PACKAGE BODY log_schema.pkg_transform AS
                        s.order_date, s.ship_date, s.delivery_date,
                        CASE WHEN s.delivery_date IS NOT NULL
                             THEN TRUNC(s.delivery_date) - TRUNC(s.order_date) END AS lead_time_days,
-                       s.total_amount, s.tax_amount, s.total_amount - s.tax_amount AS net_amount
+                       s.total_amount, s.tax_amount, s.total_amount - s.tax_amount AS net_amount,
+                       s.shipping_address
                 FROM staging_schema.orders s
                 WHERE s.synced_at > p_last
                   AND s.synced_at <= p_snap
@@ -311,14 +331,17 @@ CREATE OR REPLACE PACKAGE BODY log_schema.pkg_transform AS
                 t.shipping_region_id=src.shipping_region_id, t.order_status=src.order_status,
                 t.order_date=src.order_date, t.ship_date=src.ship_date,
                 t.delivery_date=src.delivery_date, t.lead_time_days=src.lead_time_days,
-                t.total_amount=src.total_amount, t.tax_amount=src.tax_amount, t.net_amount=src.net_amount
+                t.total_amount=src.total_amount, t.tax_amount=src.tax_amount, t.net_amount=src.net_amount,
+                -- ★G13 LOBパススルー
+                t.shipping_address=src.shipping_address
             WHEN NOT MATCHED THEN INSERT
                 (order_id, order_no, customer_id, shipping_region_id, order_status,
                  order_date, ship_date, delivery_date, lead_time_days,
-                 total_amount, tax_amount, net_amount)
+                 total_amount, tax_amount, net_amount, shipping_address)
                 VALUES (src.order_id, src.order_no, src.customer_id, src.shipping_region_id,
                         src.order_status, src.order_date, src.ship_date, src.delivery_date,
-                        src.lead_time_days, src.total_amount, src.tax_amount, src.net_amount);
+                        src.lead_time_days, src.total_amount, src.tax_amount, src.net_amount,
+                        src.shipping_address);
         END IF;
 
         SELECT COUNT(*) INTO v_tgt FROM target_schema.orders;

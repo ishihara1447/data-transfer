@@ -736,4 +736,4 @@ error_context = 'mode=DELTA, transform_class=LIGHT_TRANSFORM, '
 |---|------|------|
 | 11 | TARGET_SCHEMA のユーザー・権限設計 | 変換パッケージのオーナースキーマと TARGET スキーマの権限分離 |
 | 12 | 変換カタログの管理フロー | テーブル追加時のカタログ登録手順・承認フロー |
-| 13 | LOB 列を含むテーブルの変換経路（G13） | EMPTY_CLOB/BLOB の FLASHBACK QUERY フォールバック統合 |
+| 13 | LOB 列を含むテーブルの変換経路（G13） | **実装済み・E2E全PASS（2026-07-04）**。TARGET_SCHEMA.customers に avatar_image/remarks、orders に shipping_address を追加し、pkg_transform（40_/42_）の INITIAL(INSERT)・DELTA(MERGE) 双方で STAGING→TARGET へ無変換パススルー。LOB本体はレイヤ③では変換せず、レイヤ①②側の LOB 再同期方式（[[delta-extract-design.md]] 11章）で STAGING に反映済みの値をそのまま引き継ぐ。検証: scripts/54_test_lob_passthrough_e2e.sh（DBMS_LOB.COMPARE(TARGET,STAGING)=0、SRC→LOB再同期→STAGING→transform DELTA→TARGET の実鎖含む）。内容変換（画像加工・文章要約等）は業務ルール未定義のため引き続きスコープ外。 |
