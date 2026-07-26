@@ -266,6 +266,11 @@ data-transfer/
 | 6 | 変換結果が一部欠落 | 差分窓を「業務時刻」、進捗を「壁時計」で見ていて時間軸不一致 | STAGING に「適用時刻(synced_at)」を持たせ、窓と進捗を同一時間軸に |
 | 7 | 追跡対象とSTAGINGの不一致で `ORA-00942` | STAGING に無い表を追跡対象にしていた | 追跡対象は STAGING 実在表と一致させる |
 | 8 | Archive log が消えてCDC再開不能 | XE では保持が短い | 「適用済みになるまで消さない」運用＋保持量の監視（ダッシュE） |
+| 9 | 移行先の `START_LOGMNR` が `ORA-01371`（辞書が見つからない） | `DBMS_LOGMNR_D.BUILD(STORE_IN_REDO_LOGS)` を PDB内で実行していた。**エラーにならず「Bld: Done」と出るのに辞書がredoへ書き出されない** | **CDB$ROOT で BUILD を実行**。成否は `V$ARCHIVED_LOG` の `DICTIONARY_BEGIN`/`DICTIONARY_END` マーカーで検証する |
+| 10 | `V$LOGMNR_CONTENTS` の SELECT が `ORA-01306` | LogMinerセッションはセッションローカル。`START_LOGMNR` と別セッションで SELECT していた | `ADD_LOGFILE` → `START_LOGMNR` → `SELECT` を**同一セッション内**で実行する |
+
+> #9・#10 は「移行先でLogMinerを実行する方式」の検証（2026-07-26）で判明。
+> 詳細は [`docs/gap-analysis-5phase-schema.md`](docs/gap-analysis-5phase-schema.md) 1.2節。
 
 </details>
 
