@@ -30,6 +30,7 @@
 9. [用語集・補足](#9-用語集補足)
 10. [実環境で顕在化し得るディスク・容量の懸念](#10-実環境で顕在化し得るディスク容量の懸念)
 11. [直近の大きな設計変更：SQL_REDOを「そのまま実行」しない安全設計へ](#11-直近の大きな設計変更sql_redoをそのまま実行しない安全設計へ)
+12. [移行管理スキーマ（サンプル一式）](#12-移行管理スキーマサンプル一式)
 
 ---
 
@@ -223,8 +224,9 @@ data-transfer/
 ├── docs/                             設計ドキュメント（→ 8章）
 │   └── images/dashboard.png          ダッシュボードのスクリーンショット
 ├── sql/
-│   └── cdc/         移行元・移行先のスキーマ／差分抽出・適用のSQL（10〜35）
-│   └── transform/   変換層のSQL（40〜42：STAGING(1.0)→TARGET(2.0)）
+│   ├── cdc/           移行元・移行先のスキーマ／差分抽出・適用のSQL（10〜35）
+│   ├── transform/     変換層のSQL（40〜42：STAGING(1.0)→TARGET(2.0)）
+│   └── migration_ctl/ 移行管理スキーマ（01〜03：管理テーブル＋管理API）→ 12章
 ├── scripts/
 │   ├── 30_initial_load_flashback.sh  ① 初期ロード（整合点固定コピー）
 │   ├── 06_transfer_delta_datapump.sh ② 差分の搬送＋適用
@@ -233,7 +235,8 @@ data-transfer/
 │   ├── 51_dashboard_daemon.sh        ダッシュボード自動更新
 │   ├── 52_redo_log_view.sh           適用した変更(REDO)の確認ページ生成
 │   ├── 60_ddl_freeze.sh              テーブル構成の凍結チェック
-│   └── 61_ops_config.sh             運用パラメータ（しきい値等）の変更ツール
+│   ├── 61_ops_config.sh              運用パラメータ（しきい値等）の変更ツール
+│   └── 62_test_migration_ctl_e2e.sh  移行管理スキーマのE2E検証（T01〜T15）
 └── data-generator/                   稼働中アプリの模擬（継続的にDMLを発行）
 ```
 
@@ -250,6 +253,8 @@ data-transfer/
 | [`docs/ops-config-design.md`](docs/ops-config-design.md) | 運用パラメータ（しきい値・保持・バッチ等）の設計 |
 | [`docs/oracle-compatibility-policy.md`](docs/oracle-compatibility-policy.md) | 本番 Oracle 12c との互換ポリシー |
 | [`docs/archive-measurement-findings.md`](docs/archive-measurement-findings.md) | 変更履歴(archive log)の生成量・保持の見積り |
+| [`docs/migration-control-schema-design.md`](docs/migration-control-schema-design.md) | **移行管理スキーマの設計書**（管理テーブル9本・管理API・状態値一覧）→ 12章 |
+| [`docs/gap-analysis-5phase-schema.md`](docs/gap-analysis-5phase-schema.md) | 5フェーズ移行方式と本検証環境のギャップ分析＋移行先LogMiner方式のPoC結果 |
 
 <details>
 <summary><b>設計上の重要な学び（検証で判明したハマりどころ・エンジニア向け）</b></summary>
@@ -436,3 +441,100 @@ CUSTOMERS/ORDERS の差分そのものを自動反映する仕組みはまだ実
 
 > 詳細設計は [`docs/delta-extract-design.md`](docs/delta-extract-design.md) の
 > [11章「LOBテーブル差分反映方式（詳細設計）」](docs/delta-extract-design.md#11-lobテーブル差分反映方式詳細設計)を参照してください。
+
+---
+
+## 12. 移行管理スキーマ（サンプル一式）
+
+移行の**進捗・SCN・ファイル・エラーを1か所で管理する**ための管理スキーマ `migration_ctl` 一式です。
+「どのテーブルを、どのAPIで、どう更新するか」をひとまとまりのサンプルとして参照できます。
+
+### 12.1 なぜ必要か（3行）
+
+- 移行の状態が Data Pump のログ・シェルのログ・DBの各所に**バラバラに散る**と、進捗も失敗箇所もSQLで追えない
+- そこで **`MIGRATION_RUN_ID` を親キー**にして、全フェーズの状態・ファイル・SCN・エラーを1スキーマに集約する
+- PoC・リハーサル・本番は**別の実行ID**を発番し、過去の実行を上書きしない
+
+### 12.2 ファイル一覧
+
+| ファイル | 内容 |
+|---|---|
+| [`docs/migration-control-schema-design.md`](docs/migration-control-schema-design.md) | 設計書。テーブル定義・API仕様・状態値一覧・設計判断の根拠 |
+| [`sql/migration_ctl/01_migration_ctl_user.sql`](sql/migration_ctl/01_migration_ctl_user.sql) | 管理スキーマのユーザー作成（最小権限） |
+| [`sql/migration_ctl/02_migration_ctl_ddl.sql`](sql/migration_ctl/02_migration_ctl_ddl.sql) | 管理テーブル9本のDDL |
+| [`sql/migration_ctl/03_pkg_mig_admin.sql`](sql/migration_ctl/03_pkg_mig_admin.sql) | 管理API `PKG_MIG_ADMIN`（10プロシージャ） |
+| [`scripts/62_test_migration_ctl_e2e.sh`](scripts/62_test_migration_ctl_e2e.sh) | E2E検証（T01〜T15）。正常系＋異常系を網羅 |
+
+### 12.3 管理テーブル9本
+
+`MIGRATION_RUN` を親として全テーブルがぶら下がります。
+
+| テーブル | 管理内容 |
+|---|---|
+| `MIGRATION_RUN` | 移行実行の親。基準SCN・解析開始SCN・最終同期SCN・最終適用SCN |
+| `PHASE_STATUS` | 先行準備A/B＋フェーズ1〜5の進捗（7行） |
+| `MIGRATION_OBJECT` | 対象表、1.0↔2.0対応、全量/CDC/変換フラグ、主キー、容量、処理順 |
+| `DATAPUMP_JOB` | Export／Import／SQLFILE ジョブの実行条件と結果 |
+| `DATAPUMP_JOB_OBJECT` | ジョブと対象表の対応、表単位の結果 |
+| `DATAPUMP_FILE` | ダンプ・ログ・PARFILE の物理ファイル、チェックサム、受渡し状態 |
+| `ARCHIVE_LOG` | Thread・Sequence・SCN範囲単位の**論理**アーカイブログ |
+| `ARCHIVE_LOG_COPY` | ファイルサーバ・SSD・移行先等の**物理コピー**（論理と分離） |
+| `MIG_STATUS_HISTORY` | 状態変更の監査履歴（**追記専用**） |
+
+**SCNを3つに分けて持つ**のがこの設計の要点です。
+
+| 列 | 用途 |
+|---|---|
+| `BASELINE_SCN` | 基準SCN。Data Pump の `FLASHBACK_SCN` に使う全量断面 |
+| `MINING_START_SCN` | 解析開始SCN。基準SCNを跨ぐ長時間トランザクションを再構成するため**基準SCNより前**から解析する |
+| `TARGET_END_SCN` / `LAST_APPLIED_SCN` | 最終同期点と、そこまでに適用済みの位置 |
+
+`MINING_START_SCN <= BASELINE_SCN` はCHECK制約で強制しています。
+
+### 12.4 管理API `PKG_MIG_ADMIN`
+
+状態・SCNの更新は**直接UPDATEせずAPI経由**にして、状態遷移・履歴記録・時刻更新の実装ばらつきを防ぎます。
+
+| プロシージャ | 役割と安全装置 |
+|---|---|
+| `CREATE_RUN` | 実行を1行作成し、7フェーズ分を `NOT_STARTED` で同時作成 |
+| `FIX_BASELINE_SCN` | 基準SCNを確定。**二重設定は拒否**（ORA-20001） |
+| `MARK_ARCHIVE_READY` | 必要ログが揃った後のみ実行可。**カバレッジ不足は拒否**（ORA-20003） |
+| `SET_TARGET_END_SCN` | 最終同期点を**不変値**として確定（ORA-20001） |
+| `UPDATE_LAST_APPLIED_SCN` | 適用位置を前進のみ許可。**後退は拒否**（ORA-20004） |
+| `START_/COMPLETE_/FAIL_DATAPUMP_JOB` | ジョブ状態遷移。**不正な遷移は拒否**（ORA-20002） |
+| `VERIFY_ARCHIVE_LOG_COPY` | **全物理コピーが検証済みになるまで論理側を VERIFIED にしない** |
+| `LOG_STATUS_CHANGE` | 監査履歴の追記 |
+
+### 12.5 状態値
+
+資料・DDL・プログラム間で名称がぶれないよう統一しています（`DONE` は使わず `COMPLETED`）。
+
+| テーブル / 列 | 値 |
+|---|---|
+| `MIGRATION_RUN.STATUS` | CREATED / ARCHIVE_READY / BASELINE_FIXED / EXPORTING / IMPORTING / RUNNING / COMPLETED / FAILED / ABORTED |
+| `PHASE_STATUS.STATUS` | NOT_STARTED / RUNNING / COMPLETED / FAILED / PAUSED |
+| `MIGRATION_OBJECT.STATUS` | PENDING / IN_PROGRESS / COMPLETED / FAILED / SKIPPED |
+| `DATAPUMP_JOB.STATUS` | PLANNED / RUNNING / COMPLETED / FAILED / RETRY |
+| `DATAPUMP_FILE.STATUS` | EXPECTED / CREATED / VERIFIED / CORRUPT / LOST |
+| `ARCHIVE_LOG.COLLECT_STATUS` | EXPECTED / RECEIVED / VERIFIED / CORRUPT / MISSING / IGNORED |
+| `ARCHIVE_LOG_COPY.COPY_STATUS` | EXPECTED / RECEIVED / VERIFIED / REGISTERED / CORRUPT / LOST / DELETED |
+
+### 12.6 動かし方
+
+```bash
+# 構築＋E2E検証を一括実行（oracle-tgt に migration_ctl を作成して T01〜T15 を実行）
+./scripts/62_test_migration_ctl_e2e.sh
+```
+
+正常終了すると `[PASS] migration_ctl E2E 全テスト完了 (T01-T15)` が表示されます。
+異常系（制約違反・不正な状態遷移・SCN後退）が**正しく拒否されること**まで検証しています。
+
+### 12.7 適用範囲の注意
+
+- ここまでで作成済みなのは**先行準備A（管理スキーマのコア）**の範囲です
+- フェーズ4・5用のテーブル（`LOGMINER_BATCH` / `MINED_CHANGE` / `APPLY_TASK` / `KEY_MAPPING` /
+  `VALIDATION_RUN` / `ERROR_EVENT` など）は**未実装**で、次段の対象です
+- 本番想定は Oracle 12c のため `IDENTITY` 列を使わず、**SEQUENCE + BEFORE INSERT トリガー**で採番しています
+  （[`docs/oracle-compatibility-policy.md`](docs/oracle-compatibility-policy.md)）
+- `MARK_ARCHIVE_READY` のSCN連続性チェックはPoC段階の簡略実装です。本番前に強化が必要です
