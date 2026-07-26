@@ -15,8 +15,10 @@ CREATE USER migration_ctl IDENTIFIED BY &&MIGRATION_CTL_PASS;
 GRANT CONNECT, RESOURCE TO migration_ctl;
 ALTER USER migration_ctl QUOTA UNLIMITED ON USERS;
 
--- 他スキーマ参照（cdc_schema.* や log_schema.* への JOIN）のために付与
-GRANT SELECT ANY TABLE TO migration_ctl;
+-- cdc_schema.cdc_table_catalog への参照権限（最小権限）
+-- cdc_schema が oracle-tgt に構築された後、以下を手動で実行すること:
+--   GRANT SELECT ON cdc_schema.cdc_table_catalog TO migration_ctl;
+-- ※ cdc_schema が存在しない環境では不要（T05 は all_tables で存在確認後に分岐）
 
 PROMPT migration_ctl user created on oracle-tgt XEPDB1.
 EXIT;
