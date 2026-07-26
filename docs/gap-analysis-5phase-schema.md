@@ -141,21 +141,28 @@ DB2.0の同一PDB内に構築する。現行実装の `cdc_schema` が移行元�
 
 ### 3.2 先行準備A設計（9テーブル）の実装状況マトリクス
 
-先行準備Aで設計確定した9コアテーブルの実装状況を示す。
+先行準備Aで設計確定した9コアテーブルは、`sql/migration_ctl/02_migration_ctl_ddl.sql` として
+**全9本を実装済み**（oracle-tgt へデプロイ済み・`scripts/62_test_migration_ctl_e2e.sh` T01〜T15 PASS）。
+「旧実装での相当物」列は、置き換え前の分散管理（`cdc_schema` / `staging_ctl` / `log_schema`）に
+対応物があったかを示す。
 
-| 先行準備Aテーブル | 現行での相当物 | 有無 | 先行準備A設計との差分 |
-|---|---|:---:|---|
-| `MIGRATION_RUN` | `log_schema.migration_run_log`（部分的。フェーズ2・5専用） | △ | BASELINE_SCN / MINING_START_SCN 分離・TARGET_END_SCN・LAST_APPLIED_SCN 等が不足。設計書 v2.0 で定義済み |
-| `PHASE_STATUS` | なし | ✕ | フェーズ進捗を表す独立テーブルなし。設計書 v2.0 で7行構成を定義済み |
-| `MIGRATION_OBJECT` | `cdc_schema.cdc_table_catalog`（replay_category中心） | △ | SOURCE/STAGE/TARGET 3層・独立フラグ・PRIMARY_KEY_COLUMNS 等が不足。設計書 v2.0 で定義済み |
-| `DATAPUMP_JOB` | なし（シェルログのみ） | ✕ | 設計書 v2.0 で定義済み。実装未着手 |
-| `DATAPUMP_JOB_OBJECT` | なし | ✕ | 設計書 v2.0 で定義済み。実装未着手 |
-| `DATAPUMP_FILE` | なし（チェックサム記録もスクリプト任せ） | ✕ | 設計書 v2.0 で定義済み。実装未着手 |
-| `ARCHIVE_LOG` | なし（`V$ARCHIVED_LOG` 直接クエリのみ） | ✕ | 設計書 v2.0 で定義済み。DICTIONARY_BEGIN/END_FLAG 列で辞書ビルド確認を機械化 |
-| `ARCHIVE_LOG_COPY` | なし | ✕ | 設計書 v2.0 で定義済み。実装未着手 |
-| `MIG_STATUS_HISTORY` | なし | ✕ | 設計書 v2.0 で定義済み。追記専用・更新削除禁止 |
+| 先行準備Aテーブル | 実装 | 旧実装での相当物 | 備考 |
+|---|:---:|---|---|
+| `MIGRATION_RUN` | ○ | `log_schema.migration_run_log`（部分的。フェーズ2・5専用） | BASELINE_SCN / MINING_START_SCN / TARGET_END_SCN / LAST_APPLIED_SCN を分離して保持 |
+| `PHASE_STATUS` | ○ | なし | 先行準備A/B＋フェーズ1〜5の7行構成 |
+| `MIGRATION_OBJECT` | ○ | `cdc_schema.cdc_table_catalog`（replay_category中心） | SOURCE/STAGE/TARGET 3層・独立フラグ・PRIMARY_KEY_COLUMNS を保持 |
+| `DATAPUMP_JOB` | ○ | なし（シェルログのみ） | EXPORT / IMPORT / SQLFILE のジョブ管理 |
+| `DATAPUMP_JOB_OBJECT` | ○ | なし | ジョブ×対象表の対応と表単位の結果 |
+| `DATAPUMP_FILE` | ○ | なし（チェックサム記録もスクリプト任せ） | 物理ファイル・チェックサム・受渡し状態 |
+| `ARCHIVE_LOG` | ○ | なし（`V$ARCHIVED_LOG` 直接クエリのみ） | DICTIONARY_BEGIN/END_FLAG 列で辞書ビルド確認を機械化 |
+| `ARCHIVE_LOG_COPY` | ○ | なし | 論理ログと物理コピーを分離 |
+| `MIG_STATUS_HISTORY` | ○ | なし | 追記専用・更新削除禁止 |
 
-凡例: ○=一致 / △=部分的に相当する仕組みあり / ✕=対応物なし
+凡例: ○=実装済み / △=部分的 / ✕=なし
+
+> **注意**: ここでの「実装済み・PASS」は、**管理テーブルとAPIが仕様どおり動くこと**の検証である。
+> 実データの移行を伴う検証ではなく、また実運用スクリプト（`setup.sh` や CDC サイクル）からは
+> まだ呼ばれていない（スタンドアロン状態）。フェーズごとの検証到達点は5章を参照。
 
 ### 3.3 次段テーブル群（先行準備A範囲外）の現行対応
 
@@ -195,7 +202,7 @@ DB2.0の同一PDB内に構築する。現行実装の `cdc_schema` が移行元�
 
 | 新設計フェーズ | 現行実装での対応スクリプト/ドキュメント | 実装状況 |
 |---|---|---|
-| 先行準備A（管理スキーマ最小構築・9テーブル） | `sql/migration_ctl/02_migration_ctl_ddl.sql`（旧3テーブル版） | △ 3テーブル版のみ実装済み。9テーブル版 DDL は v2.0 設計書に基づき再作成が必要 |
+| 先行準備A（管理スキーマ最小構築・9テーブル） | `sql/migration_ctl/01〜03`, `scripts/62_test_migration_ctl_e2e.sh` | ○ 9テーブル＋`PKG_MIG_ADMIN` 実装済み・E2E PASS（T01〜T15）。ただし管理機構自体の検証であり、実データ移行は未実施・実運用スクリプトへ未接続 |
 | 先行準備B（Archived Redo出力・収集） | `14_supplemental_logging.sql`, `47_archive_gap_check.sh` | △ Supplemental Loggingは実装済み。収集・保全の永続台帳はなし |
 | フェーズ1（初回全量Export） | `30_initial_load_flashback.sh` | △ AS OF SCN方式は実装済みだが、Data Pump Exportという形ではない |
 | フェーズ2（初回全量Import） | 同上 ＋ `log_schema.migration_*_log`（同一DB内SRC→TGTスキーマ移行のサンプル実装） | △ 本番のDataPump Import相当の検証はされていない |
