@@ -1,0 +1,36 @@
+{
+  "domain": "学習",
+  "updated_at": "2026-07-26",
+  "headline": "migration_ctl スキーマ実装・レビュー修正まで完了。DATAPUMP_JOB / ARCHIVE_LOG 台帳が次の着手対象",
+  "source": "git log, docs/migration-control-schema-design.md, docs/gap-analysis-5phase-schema.md",
+  "items": [
+    {
+      "title": "migration_ctl スキーマ実装（レビュー修正込み）",
+      "status": "✅ 完了",
+      "summary": "MIGRATION_RUN / PHASE_STATUS / MIGRATION_OBJECT の3テーブルを oracle-tgt に実装。quality-reviewer 指摘（env.example 未定義・SELECT ANY TABLE 過剰権限・DDL インライン展開）を修正しレビュー PASS（2026-07-26）。",
+      "next": "DATAPUMP_JOB / ARCHIVE_LOG 等の次段テーブル設計（migration-control-schema-design.md §7 優先度高）に着手する",
+      "link": "sql/migration_ctl/02_migration_ctl_ddl.sql"
+    },
+    {
+      "title": "LogMiner DB2.0側実行 PoC",
+      "status": "✅ 完了",
+      "summary": "CDB$ROOT で STORE_IN_REDO_LOGS を実行すれば oracle-tgt 側でも PDB スキーマの変更を完全解決できることを実機で確認。新設計アーキテクチャの技術的成立を証明。",
+      "next": "PoC 知見（CON_IDフィルタ不可・辞書マーカー確認必須）を ARCHIVE_LOG テーブル設計に反映する",
+      "link": "docs/gap-analysis-5phase-schema.md"
+    },
+    {
+      "title": "5フェーズ移行設計ギャップ分析",
+      "status": "🔍 分析済み・実装待ち",
+      "summary": "現行実装と新5フェーズ設計との差分を gap-analysis-5phase-schema.md に整理済み。最大ギャップは移行管理スキーマの統合（migration_ctl で着手済み）と DATAPUMP_JOB / ARCHIVE_LOG 台帳の欠如。",
+      "next": "優先度高テーブル群（DATAPUMP_JOB, DATAPUMP_FILE, ARCHIVE_LOG, ARCHIVE_LOG_COPY）の設計文書を作成する",
+      "link": "docs/gap-analysis-5phase-schema.md"
+    },
+    {
+      "title": "旧移行パッケージ改善 (pending-items)",
+      "status": "⏸ 保留",
+      "summary": "pkg_migration の BULK COLLECT バッチ処理・REGEXP_LIKE 日付検証・batch_no ログ等 HIGH 優先の未対応項目が残存。新設計への移行方針確定後に対応要否を判断する。",
+      "next": "新5フェーズ設計の migration_ctl ベース実装を優先し、旧パッケージ改善は対応要否を別途判断する",
+      "link": "docs/pending-items.md"
+    }
+  ]
+}
