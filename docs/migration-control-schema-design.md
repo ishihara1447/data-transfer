@@ -557,3 +557,11 @@ ORDER BY mo.PROCESS_ORDER NULLS LAST, mo.OBJECT_NAME;
 - [x] クロススキーマ FK を設けず、既存テーブルへの影響がゼロか
 - [x] 途中失敗後の再実行方針が記載されているか（§3.2 利用パターン参照）
 - [x] `CHK_MIG_RUN_SCN` により `MINING_START_SCN <= BASELINE_SCN` の設計整合性制約があるか
+
+---
+
+## 付録: 実機検証で踏んだ失敗と対処（ノウハウ）
+
+| # | 現象 | 原因 | 効いた対処 |
+|---|------|------|-----------|
+| - | エラーなし（スムーズに完了） | - | 設計ドキュメントの DDL ドラフトをそのまま実装し、SEQUENCE + BEFORE INSERT トリガー方式・SQL*Plus 互換構文・docker exec -u oracle パターンを既存スクリプトから踏襲したため問題なし |
