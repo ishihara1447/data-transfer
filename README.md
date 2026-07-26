@@ -255,6 +255,7 @@ data-transfer/
 | [`docs/archive-measurement-findings.md`](docs/archive-measurement-findings.md) | 変更履歴(archive log)の生成量・保持の見積り |
 | [`docs/migration-control-schema-design.md`](docs/migration-control-schema-design.md) | **移行管理スキーマの設計書**（管理テーブル9本・管理API・状態値一覧）→ 12章 |
 | [`docs/gap-analysis-5phase-schema.md`](docs/gap-analysis-5phase-schema.md) | 5フェーズ移行方式と本検証環境のギャップ分析＋移行先LogMiner方式のPoC結果 |
+| [`docs/phase1-2-deliverables-and-flow.md`](docs/phase1-2-deliverables-and-flow.md) | **フェーズ1・2（全量Export/Import）の成果物一覧とプロセスフロー図**（着手前の全体把握用） |
 
 <details>
 <summary><b>設計上の重要な学び（検証で判明したハマりどころ・エンジニア向け）</b></summary>
