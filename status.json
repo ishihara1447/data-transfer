@@ -1,36 +1,36 @@
 {
   "domain": "学習",
   "updated_at": "2026-07-26",
-  "headline": "migration_ctl スキーマ実装・レビュー修正まで完了。DATAPUMP_JOB / ARCHIVE_LOG 台帳が次の着手対象",
-  "source": "git log, docs/migration-control-schema-design.md, docs/gap-analysis-5phase-schema.md",
+  "headline": "migration_ctl スキーマ v2.0 完成。9テーブル + PKG_MIG_ADMIN 実機 PASS (T01-T15)。次はフェーズ3〜4用テーブルと MIG_CHECKPOINT の追加判断。",
+  "source": "git log, docs/migration-control-schema-design.md v2.0, docs/gap-analysis-5phase-schema.md",
   "items": [
     {
-      "title": "migration_ctl スキーマ実装（レビュー修正込み）",
+      "title": "migration_ctl スキーマ v2.0 実装（9テーブル + PKG_MIG_ADMIN）",
       "status": "✅ 完了",
-      "summary": "MIGRATION_RUN / PHASE_STATUS / MIGRATION_OBJECT の3テーブルを oracle-tgt に実装。quality-reviewer 指摘（env.example 未定義・SELECT ANY TABLE 過剰権限・DDL インライン展開）を修正しレビュー PASS（2026-07-26）。",
-      "next": "DATAPUMP_JOB / ARCHIVE_LOG 等の次段テーブル設計（migration-control-schema-design.md §7 優先度高）に着手する",
-      "link": "sql/migration_ctl/02_migration_ctl_ddl.sql"
+      "summary": "先行準備Aの9コアテーブルを全実装。PKG_MIG_ADMIN（10 PROCEDURE）を新設。DB Link前提の誤りを是正し同一PDB内構成を明記。E2E T01-T15 全 PASS（2026-07-26）。",
+      "next": "フェーズ3実装前に MIG_CHECKPOINT を先行追加するかどうかを判断する（設計書 §2.3 に課題として記録済み）",
+      "link": "sql/migration_ctl/03_pkg_mig_admin.sql"
     },
     {
-      "title": "LogMiner DB2.0側実行 PoC",
+      "title": "設計メモ是正（DB Link誤り・3テーブル誤り・状態値不統一）",
       "status": "✅ 完了",
-      "summary": "CDB$ROOT で STORE_IN_REDO_LOGS を実行すれば oracle-tgt 側でも PDB スキーマの変更を完全解決できることを実機で確認。新設計アーキテクチャの技術的成立を証明。",
-      "next": "PoC 知見（CON_IDフィルタ不可・辞書マーカー確認必須）を ARCHIVE_LOG テーブル設計に反映する",
+      "summary": "設計メモ原典(2248行)を精読し4つの誤りを是正。PHASE_STATUS 7行採用・MIGRATION_OBJECT_PHASE_STATUS 次段・MIG_CHECKPOINT 先行準備A外の設計判断を確定・記録した。",
+      "next": "設計判断を次段実装時の引き継ぎ資料として docs/migration-control-schema-design.md §2 に記録済み",
+      "link": "docs/migration-control-schema-design.md"
+    },
+    {
+      "title": "LogMiner DB2.0側実行 PoC（実機検証済み）",
+      "status": "✅ 完了",
+      "summary": "CDB$ROOT で STORE_IN_REDO_LOGS を使えば oracle-tgt 側で PDB スキーマ変更を完全解決できることを確認。ARCHIVE_LOG.DICTIONARY_*_FLAG で辞書マーカー確認を機械化する設計に反映済み。",
+      "next": "フェーズ3・4の実装段階でこの知見（CON_IDフィルタ不可・辞書マーカー確認必須）を活用する",
       "link": "docs/gap-analysis-5phase-schema.md"
     },
     {
-      "title": "5フェーズ移行設計ギャップ分析",
-      "status": "🔍 分析済み・実装待ち",
-      "summary": "現行実装と新5フェーズ設計との差分を gap-analysis-5phase-schema.md に整理済み。最大ギャップは移行管理スキーマの統合（migration_ctl で着手済み）と DATAPUMP_JOB / ARCHIVE_LOG 台帳の欠如。",
-      "next": "優先度高テーブル群（DATAPUMP_JOB, DATAPUMP_FILE, ARCHIVE_LOG, ARCHIVE_LOG_COPY）の設計文書を作成する",
-      "link": "docs/gap-analysis-5phase-schema.md"
-    },
-    {
-      "title": "旧移行パッケージ改善 (pending-items)",
-      "status": "⏸ 保留",
-      "summary": "pkg_migration の BULK COLLECT バッチ処理・REGEXP_LIKE 日付検証・batch_no ログ等 HIGH 優先の未対応項目が残存。新設計への移行方針確定後に対応要否を判断する。",
-      "next": "新5フェーズ設計の migration_ctl ベース実装を優先し、旧パッケージ改善は対応要否を別途判断する",
-      "link": "docs/pending-items.md"
+      "title": "次段実装（フェーズ4・5用テーブル群）",
+      "status": "📋 次段",
+      "summary": "LOGMINER_BATCH / MINED_TRANSACTION / MINED_CHANGE / APPLY_BATCH / APPLY_TASK / MIG_CHECKPOINT 等はフェーズ4・5実装前に追加予定。MIG_CHECKPOINT はフェーズ3用途で先行判断が必要。",
+      "next": "MIG_CHECKPOINT の先行追加可否を判断してから、フェーズ3（Archived Redo収集）の実装設計に着手する",
+      "link": "docs/migration-control-schema-design.md"
     }
   ]
 }
