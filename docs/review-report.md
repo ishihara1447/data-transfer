@@ -102,3 +102,60 @@ HIGH 指摘事項はなし。Oracle 12c 非互換構文・SQL*Plus 非互換構�
 | L-3 | LOW | 04_create_pkg_migration.sql | バッチ進捗更新で finished_at を NULL 上書き | 実害なし、可読性のみ | **修正済み**（ELSE finished_at で現在値保持） |
 | L-4 | LOW | docs/migration-design.md | 設計書の FORALL 記述と実装（FOR LOOP）の不整合 | ドキュメント修正のみ | **修正済み**（FOR LOOP + 理由を追記） |
 | L-5 | LOW | docker-compose.yml | TCP のみのヘルスチェックで PDB 起動完了を保証しない | 初回実行時に接続失敗の可能性、再実行で解決 | **修正済み**（checkDBStatus.sh に変更） |
+
+---
+
+## レビュー: migration_ctl スキーマ実装（2026-07-26）
+
+### 対象コミット
+`7633eeb` 統合移行管理スキーマ(migration_ctl)を実装: MIGRATION_RUN/PHASE_STATUS/MIGRATION_OBJECT, E2E全PASS
+
+### 結果サマリ
+**CONDITIONAL_PASS**
+
+HIGH 指摘事項なし。Oracle 12c 互換性・設計の完全性・既存テーブルへの無干渉はすべて OK。MEDIUM 3件（.env.example への変数不足・E2E スクリプトの DDL インライン化・過剰権限付与）を修正することで PASS となる。LOW 2件は参考扱い。
+
+指摘件数: HIGH 0 / MEDIUM 3 / LOW 2
+
+---
+
+### 指摘事項
+
+| # | 種別 | ファイル | 内容 | 対処方針 |
+|---|------|----------|------|---------|
+| M-1 | MEDIUM | `.env.example` | `MIGRATION_CTL_PASS` が未定義。`62_test_migration_ctl_e2e.sh` は `set -u` を有効にして `.env` を source するため、この変数が未設定だと「unbound variable」で即死する。新規開発者は `.env.example` を参照してセットアップするため、コピーした時点でスクリプトが動かない状態になる。 | `.env.example` に `MIGRATION_CTL_PASS=migctlpass1` の行を追加する。コメントとして「統合移行管理スキーマ（migration_ctl）のパスワード」を付記する。 |
+| M-2 | MEDIUM | `scripts/62_test_migration_ctl_e2e.sh` (lines 78–207) | コメント「02_migration_ctl_ddl.sql を実行します」と実際の動作（DDL をヒアドキュメントにインライン展開）が乖離している。`02_migration_ctl_ddl.sql` に列追加・制約変更が入った場合、E2E スクリプトは古い DDL でテストを継続するため変更が検証されない。メンテナンスコストが 2 倍になる。 | `docker exec oracle-tgt bash -c "..."` 内で `sqlplus ... @/path/to/sql` を呼び出す方式に変更し、DDL は SQL ファイル 1 か所に一元化する。あるいはヒアドキュメント冒頭に「NOTE: 02_migration_ctl_ddl.sql と同期を保つこと」と明示する（後者は応急処置）。 |
+| M-3 | MEDIUM | `sql/migration_ctl/01_migration_ctl_user.sql` (line 19) | `GRANT SELECT ANY TABLE TO migration_ctl` は DB 全体への読み取り権限であり最小権限原則に違反する。migration_ctl が参照するのは `cdc_schema.cdc_table_catalog` と `log_schema.migration_run_log` 等に限定される。本番 12c 環境では DBA が `SELECT ANY TABLE` 付与を拒否するケースも多い。 | `GRANT SELECT ON cdc_schema.cdc_table_catalog TO migration_ctl;` 等、参照対象テーブルへの個別 GRANT に絞る。対象が確定していない段階であれば、コメントで「将来は個別 GRANT に置き換える」と明記する。 |
+| L-1 | LOW | `scripts/62_test_migration_ctl_e2e.sh` (lines 23–33) | `tgt_sysdba()` は `docker exec -u oracle oracle-tgt` と `-u oracle` を指定しているが、`mctl_sql()` は `docker exec oracle-tgt`（`-u` 省略）。XE コンテナのデフォルト実行ユーザーが oracle であれば実害はないが、コンテナ設定によっては root として実行される可能性がある。 | `mctl_sql()` にも `-u oracle` を追加し、接続方式を統一する。 |
+| L-2 | LOW | `docs/migration-control-schema-design.md` (末尾付録) | ノウハウ記録の表が「エラーなし（スムーズに完了）」1行のみで、実装で踏襲したパターン（SEQUENCE+TRG、`docker exec -u oracle`、`WHENEVER SQLERROR EXIT SQL.SQLCODE`、スキーマ未修飾 DDL 等）が記載されていない。設計フォーマットは満たすが将来の参照価値が低い。 | 「既存スクリプトから踏襲したパターン」として、SEQUENCE + BEFORE INSERT トリガー方式の採用根拠・SQL*Plus 互換ヘッダの定型・`docker exec -u oracle` の使用箇所等を表の「効いた対処」列に具体的に記載する。 |
+
+---
+
+### 確認済み事項（問題なし）
+
+**Oracle 12c 互換性**
+- IDENTITY 列は使用されていない。3テーブルすべて SEQUENCE + BEFORE INSERT トリガー方式で採番（`oracle-compatibility-policy.md` 準拠）。
+- JSON 関数（JSON_TABLE / JSON_OBJECT 等）、FETCH FIRST / OFFSET、WITH FUNCTION、ACCESSIBLE BY、LISTAGG ON OVERFLOW TRUNCATE はいずれも使用されていない。
+- 全識別子（制約名・シーケンス名・トリガー名）が Oracle 12.1 の 30 文字上限以内であることを確認。最長は `TRG_MIGRATION_OBJECT_BI`（23文字）。
+- VARCHAR2 はすべて 4000 バイト以内（REMARKS / ERROR_MESSAGE が上限値 4000 で定義。`MAX_STRING_SIZE=EXTENDED` 前提なし）。
+- SQL*Plus 互換性：`WHENEVER SQLERROR EXIT SQL.SQLCODE` / `WHENEVER OSERROR EXIT FAILURE` / `SET ECHO ON` / `SET FEEDBACK ON` / `/` デリミタ / `EXIT;` の定型が全ファイルに正しく実装されている。SQLcl 専用コマンド（`SET LINESIZE AUTO` 等）は使用なし。
+
+**設計の完全性（migration-control-schema-design.md §3 との照合）**
+- `BASELINE_SCN` と `MINING_START_SCN` が別カラムとして `MIGRATION_RUN` テーブルに存在する。
+- `CHK_MIG_RUN_SCN` 制約（`MINING_START_SCN IS NULL OR BASELINE_SCN IS NULL OR MINING_START_SCN <= BASELINE_SCN`）が実装されている。NULL 許容ロジックも設計通り。
+- `PHASE_STATUS.CHK_PHASE_STATUS_CODE` に 7 フェーズ分（PREP_A, PREP_B, PHASE1〜PHASE5）の CHECK 制約が実装されている。
+- `MIGRATION_OBJECT.CDC_CATALOG_TABLE_NAME` は FK 制約なし（ソフト参照）で実装されている。
+
+**既存テーブルへの無干渉**
+- `cdc_schema` / `staging_ctl` / `log_schema` の既存テーブルに対する DDL 変更（ALTER TABLE 等）は一切ない。
+- クロススキーマ FK 制約は設けられていない。migration_ctl スキーマ内の FK（MIGRATION_RUN → PHASE_STATUS, MIGRATION_RUN → MIGRATION_OBJECT）のみ。
+
+**E2E テストスクリプトの制約検証**
+- T01: UNIQUE 制約（ORA-00001）・CHECK 制約（ORA-02290）を正しく検証している。
+- T02: FK 制約（ORA-02291）・UNIQUE 制約（ORA-00001）・状態遷移（NOT_STARTED → RUNNING → DONE）を正しく検証している。
+- T03: UNIQUE 制約（ORA-00001）を正しく検証している。
+- T04: `CHK_MIG_RUN_SCN` の正常ケース（500 <= 1000）と違反ケース（2000 > 1000 → ORA-02290）を正しく検証している。
+- T05: `cdc_schema.cdc_table_catalog` の有無を動的に判定し、LEFT JOIN の動作を適切に検証している。
+- クリーンアップ処理（DELETE 3テーブル + COMMIT）が最後に実行されている。`LIKE 'TEST-RUN-%'` による絞り込みで対象を限定している。
+- PASS/FAIL 判定変数（`PASS=1/0`）が正確に機能し、最終的な終了コード（`exit 1`）に連動している。
+
