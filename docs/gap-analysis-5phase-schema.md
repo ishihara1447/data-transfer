@@ -3,13 +3,20 @@
 ## 0. この文書の目的
 
 2026-07-26付で共有された以下2文書（以下「新設計」）に対し、現行の `data-transfer`
-検証環境実装が どこまで一致し、何が不足しているかを棚卸しする。
+検証環境実装がどこまで一致し、何が不足しているかを棚卸しする。
 
 - 「Oracleデータ移行 概要説明文書」
 - 「Oracleデータ移行 調査・検討・検証・設計事項一覧（5フェーズ・移行管理テーブル連携反映版）」
 
 実装方針の決定はこの文書では行わない（ギャップの可視化のみ）。
 既存の `docs/gap-analysis.md`（外部リスク分析報告書 vs 現行環境）とは比較対象が異なる別文書として扱う。
+
+**改訂履歴（v2 - 2026-07-26）**:
+- 移行管理スキーマの設計対象を3テーブルから先行準備A対象の9テーブルへ更新。
+- DB 構成前提（同一 PDB 内・DB Link 不使用）を明記し、DB Link を前提とした記述を是正。
+- §3.1 の「現行管理状態」を新設計の前提（DB2.0 同一 PDB 内に全スキーマを集約）に合わせて更新。
+- §3.2 の有無マトリクスを先行準備A設計（9テーブル）の実装状況に更新。
+- §7 優先度別ギャップを v2 設計反映後の状態に更新。
 
 ---
 
@@ -96,8 +103,13 @@ update "SRC_SCHEMA"."REGIONS" set "REGION_NAME" = 'LOGMINER_POC_TEST_UPD2'
 | Migrationファイルサーバ（DB非搭載・マウント中継） | ホスト側 `docker cp`（コンテナ間で直接搬送、独立ファイルサーバ層なし） | ✕ 未実装。中継専用ノードの構成要素がない |
 | DB2.0側1.0スキーマ | STAGING_SCHEMA | ○ 概念一致 |
 | DB2.0側2.0スキーマ | TARGET_SCHEMA | ○ 概念一致 |
-| 移行管理スキーマ | LOG_SCHEMA（変換ログのみ）＋ CDC_SCHEMA（抽出制御・src側）＋ STAGING_CTL（適用制御・tgt側）に分散 | △ 機能はあるが**統合された移行管理スキーマとして存在しない**（詳細は3章） |
+| 移行管理スキーマ（DB2.0 同一PDB内・DB Link 不使用） | LOG_SCHEMA（変換ログのみ）＋ CDC_SCHEMA（現行実装では移行元oracle-src側）＋ STAGING_CTL（tgt側）に分散 | △ 機能はあるが**統合された移行管理スキーマとして存在しない**（詳細は3章） |
 | 8TB SSD搬送方式（代替案） | 未検討（`docker cp`のみ） | ✕ 未検討 |
+
+**前提の明確化**: 新設計では `cdc_schema`・`staging_ctl`・`log_schema`・`migration_ctl` はすべて
+DB2.0の同一PDB内に構築する。現行実装の `cdc_schema` が移行元（oracle-src）側に存在することは
+現行実装固有の状態であり、新設計への移行時には DB2.0 側へ集約する。
+**DB Link は使用しない**（設計メモ §12.1）。
 
 ---
 
@@ -108,49 +120,58 @@ update "SRC_SCHEMA"."REGIONS" set "REGION_NAME" = 'LOGMINER_POC_TEST_UPD2'
 
 ### 3.1 現行の管理状態（スキーマ横断で分散）
 
-| スキーマ | 役割 | 主なテーブル |
+| スキーマ | 役割（現行実装） | 主なテーブル |
 |---|---|---|
-| `cdc_schema`（src側） | 抽出制御 | `cdc_table_catalog`（replay_category分類）, `ops_config`/`ops_config_history`, `lob_resync_request` |
+| `cdc_schema`（現行: oracle-src側） | 抽出制御 | `cdc_table_catalog`（replay_category分類）, `ops_config`/`ops_config_history`, `lob_resync_request` |
 | `staging_ctl`（tgt側） | CDC適用制御 | `delta_queue`, `apply_ledger`, `delta_apply_state`, `delta_manual_review_queue`, `lob_resync_target` |
 | `log_schema`（tgt側） | 全量移行・変換ログ | `migration_run_log`, `migration_step_log`, `migration_error_log`, `transform_catalog`, `transform_state`, `code_mapping` |
 
 **問題点**：
+
 - **実行を横断する親キーがない**：`log_schema.migration_run_log.run_id` はあるが、これは
   フェーズ2（全量Import相当）〜フェーズ5（変換）のログ専用。フェーズ1のExportジョブ管理や
-  フェーズ3のArchived Redo収集とは紐付いていない。CDC側（`cdc_schema`/`staging_ctl`）には
-  そもそも「実行ID」という概念自体が存在しない
+  フェーズ3のArchived Redo収集とは紐付いていない。CDC側には「実行ID」の概念自体がない。
 - **PoC/リハーサル/本番の分離機構がない**：新設計の「同一DB間でもMIGRATION_RUN_IDを分けて過去実行を
-  上書きしない」という運用原則に相当する仕組みが現行にはない
+  上書きしない」という運用原則に相当する仕組みが現行にはない。
 - **Data Pumpジョブそのものを管理DBで追跡していない**：`DATAPUMP_JOB` / `DATAPUMP_JOB_OBJECT` /
-  `DATAPUMP_FILE` に相当する管理テーブルは存在せず、Data Pumpの実行結果は `logs/*.log`
-  （シェルスクリプトのログファイル）にしか残らない。ジョブ単位のSTATUS遷移・チェックサム・
-  ファイル対応関係をSQLで追跡できない
+  `DATAPUMP_FILE` に相当する管理テーブルは存在せず、Data Pumpの実行結果は `logs/*.log` にしか残らない。
 - **Archived Redoの論理ログ・物理コピーの管理がない**：`ARCHIVE_LOG` / `ARCHIVE_LOG_COPY` に
-  相当するテーブルはない。`scripts/47_archive_gap_check.sh`（アーカイブログ連番欠落チェック）は
-  実装済みだが、`V$ARCHIVED_LOG` を都度クエリする方式であり、Thread・Sequence・SCN範囲・
-  チェックサムを永続化した独自台帳としては持っていない
+  相当するテーブルはない。`scripts/47_archive_gap_check.sh` は実装済みだが、`V$ARCHIVED_LOG` を
+  都度クエリする方式であり、永続化した独自台帳ではない。
 
-### 3.2 新設計のコアテーブル群との対応（有無マトリクス）
+### 3.2 先行準備A設計（9テーブル）の実装状況マトリクス
 
-| 新設計テーブル | 現行での相当物 | 有無 |
-|---|---|:---:|
-| `MIGRATION_RUN` | `log_schema.migration_run_log`（部分的。フェーズ2・5専用でBASELINE_SCN/MINING_START_SCNの区別なし） | △ |
-| `PHASE_STATUS` | なし（フェーズ進捗を表す独立テーブルなし。ダッシュボードHTMLで可視化するのみ） | ✕ |
-| `MIGRATION_OBJECT` | `cdc_schema.cdc_table_catalog`（replay_category中心。容量見積り・処理順・全量/CDC/変換フラグは持たない） | △ |
-| `DATAPUMP_JOB` / `DATAPUMP_JOB_OBJECT` | なし（シェルログのみ） | ✕ |
-| `DATAPUMP_FILE` | なし（チェックサム記録もスクリプト任せ） | ✕ |
-| `ARCHIVE_LOG` / `ARCHIVE_LOG_COPY` | なし（`V$ARCHIVED_LOG`直接クエリのみ、`scripts/47_archive_gap_check.sh`） | ✕ |
-| `LOGMINER_BATCH` / `LOGMINER_BATCH_LOG` | なし（LogMiner起動は`17b_sys_cdc_runner.sql`/`31_pkg_delta_extract_src.sql`内でその場実行、バッチ単位の永続記録なし） | ✕ |
-| `MINED_TRANSACTION` / `MINED_CHANGE` | `cdc_schema.delta_queue`（近い。ただしXID単位のトランザクション表とDML明細表が分離されていない、単一テーブルにフラット化） | △ |
-| `APPLY_BATCH` / `APPLY_TASK` | `staging_ctl.apply_ledger` + `staging_ctl.delta_apply_state`（近い。Tx単位の結果記録は`apply_ledger`にあるが、バッチという概念単位はない） | △ |
-| `MIG_CHECKPOINT` | `staging_ctl.delta_apply_state.last_applied_id` 等（近いが、コンポーネント別・Thread別の汎用チェックポイントテーブルではない） | △ |
-| `TRANSFORM_BATCH` | `log_schema.transform_state` | △ |
-| `KEY_MAPPING` | `log_schema.code_mapping`（ステータスコード変換のみ。旧キー↔新キーの1対多等の汎用対応表ではない） | △ |
-| `VALIDATION_RUN` / `VALIDATION_RESULT` | `18_cdc_verify.sql`（件数比較のみ、`docs/gap-analysis.md` G12で二段階検証は実装済みと記録あり＝`49_two_stage_verify.sh`で更新されている可能性、要再確認） | △ |
-| `ERROR_EVENT` | `log_schema.migration_error_log`（全量移行のみ対象。CDC側のエラーは`apply_ledger.FAILED`や`delta_manual_review_queue`に分散） | △ |
-| `MIG_STATUS_HISTORY` | なし | ✕ |
+先行準備Aで設計確定した9コアテーブルの実装状況を示す。
+
+| 先行準備Aテーブル | 現行での相当物 | 有無 | 先行準備A設計との差分 |
+|---|---|:---:|---|
+| `MIGRATION_RUN` | `log_schema.migration_run_log`（部分的。フェーズ2・5専用） | △ | BASELINE_SCN / MINING_START_SCN 分離・TARGET_END_SCN・LAST_APPLIED_SCN 等が不足。設計書 v2.0 で定義済み |
+| `PHASE_STATUS` | なし | ✕ | フェーズ進捗を表す独立テーブルなし。設計書 v2.0 で7行構成を定義済み |
+| `MIGRATION_OBJECT` | `cdc_schema.cdc_table_catalog`（replay_category中心） | △ | SOURCE/STAGE/TARGET 3層・独立フラグ・PRIMARY_KEY_COLUMNS 等が不足。設計書 v2.0 で定義済み |
+| `DATAPUMP_JOB` | なし（シェルログのみ） | ✕ | 設計書 v2.0 で定義済み。実装未着手 |
+| `DATAPUMP_JOB_OBJECT` | なし | ✕ | 設計書 v2.0 で定義済み。実装未着手 |
+| `DATAPUMP_FILE` | なし（チェックサム記録もスクリプト任せ） | ✕ | 設計書 v2.0 で定義済み。実装未着手 |
+| `ARCHIVE_LOG` | なし（`V$ARCHIVED_LOG` 直接クエリのみ） | ✕ | 設計書 v2.0 で定義済み。DICTIONARY_BEGIN/END_FLAG 列で辞書ビルド確認を機械化 |
+| `ARCHIVE_LOG_COPY` | なし | ✕ | 設計書 v2.0 で定義済み。実装未着手 |
+| `MIG_STATUS_HISTORY` | なし | ✕ | 設計書 v2.0 で定義済み。追記専用・更新削除禁止 |
 
 凡例: ○=一致 / △=部分的に相当する仕組みあり / ✕=対応物なし
+
+### 3.3 次段テーブル群（先行準備A範囲外）の現行対応
+
+以下は先行準備Aの対象外（フェーズ4・5実装前または本番設計フェーズに追加）。
+
+| 次段テーブル | 現行での相当物 | 有無 |
+|---|---|:---:|
+| `LOGMINER_BATCH` / `LOGMINER_BATCH_LOG` | なし（LogMiner起動は`17b_sys_cdc_runner.sql`内でその場実行、バッチ単位の永続記録なし） | ✕ |
+| `MINED_TRANSACTION` / `MINED_CHANGE` | `cdc_schema.delta_queue`（近い。ただしXID単位のトランザクション表とDML明細表が分離されていない） | △ |
+| `APPLY_BATCH` / `APPLY_TASK` | `staging_ctl.apply_ledger` + `staging_ctl.delta_apply_state`（近い。バッチ単位の概念はない） | △ |
+| `MIG_CHECKPOINT` | `staging_ctl.delta_apply_state.last_applied_id` 等（近いが汎用チェックポイントではない） | △ |
+| `MIGRATION_OBJECT_PHASE_STATUS` | なし | ✕ |
+| `TRANSFORM_BATCH` | `log_schema.transform_state` | △ |
+| `KEY_MAPPING` | `log_schema.code_mapping`（ステータスコード変換のみ） | △ |
+| `VALIDATION_RUN` / `VALIDATION_RESULT` | `scripts/49_two_stage_verify.sh`（DBへの永続化はない） | △ |
+| `ERROR_EVENT` | `log_schema.migration_error_log`（全量移行のみ対象。CDC側は分散） | △ |
 
 ---
 
@@ -166,8 +187,7 @@ update "SRC_SCHEMA"."REGIONS" set "REGION_NAME" = 'LOGMINER_POC_TEST_UPD2'
 - 長時間トランザクションが基準断面を跨ぐケースは未対応（既存ギャップ分析でも最優先ギャップ=G2として指摘済み）
 - `COMMITTED_DATA_ONLY` オプションも未使用（G3）
 
-新設計のP1-04・P3-03・6.2.2は、まさにこの既存最優先ギャップ（G2/G3/G4）を
-正面から設計しようとしている内容であり、**新設計を導入すること自体が現行最大の弱点の解消策**になっている。
+新設計を導入すること自体が現行最大の弱点の解消策になっている。
 
 ---
 
@@ -175,11 +195,11 @@ update "SRC_SCHEMA"."REGIONS" set "REGION_NAME" = 'LOGMINER_POC_TEST_UPD2'
 
 | 新設計フェーズ | 現行実装での対応スクリプト/ドキュメント | 実装状況 |
 |---|---|---|
-| 先行準備A（管理スキーマ最小構築） | なし | ✕ 未着手 |
+| 先行準備A（管理スキーマ最小構築・9テーブル） | `sql/migration_ctl/02_migration_ctl_ddl.sql`（旧3テーブル版） | △ 3テーブル版のみ実装済み。9テーブル版 DDL は v2.0 設計書に基づき再作成が必要 |
 | 先行準備B（Archived Redo出力・収集） | `14_supplemental_logging.sql`, `47_archive_gap_check.sh` | △ Supplemental Loggingは実装済み。収集・保全の永続台帳はなし |
-| フェーズ1（初回全量Export） | `30_initial_load_flashback.sh` | △ Flashback SCNベースの初期ロードは実装済みだが、Data Pump Exportという形ではなく`PKG_CDC_SNAPSHOT`のAS OF SCN方式（migration-strategy.md §9で「本番はDataPump、検証はAS OF SCN」と明記された代替） |
-| フェーズ2（初回全量Import） | 同上 ＋ `log_schema.migration_*_log`（別の独立したpkg_migrationベースのバッチ移行の枠組み。同一DB内SRC→TGTスキーマ移行のサンプル実装、CDC方式とは別経路） | △ 本番のDataPump Import相当の検証はされていない |
-| フェーズ3（Archived Redo収集） | `47_archive_gap_check.sh`, `04_sync_archivelogs.sh` | △ 欠落チェックは実装済みだが、独立フェーズとしての管理（先行準備Bとの統合）はない |
+| フェーズ1（初回全量Export） | `30_initial_load_flashback.sh` | △ AS OF SCN方式は実装済みだが、Data Pump Exportという形ではない |
+| フェーズ2（初回全量Import） | 同上 ＋ `log_schema.migration_*_log`（同一DB内SRC→TGTスキーマ移行のサンプル実装） | △ 本番のDataPump Import相当の検証はされていない |
+| フェーズ3（Archived Redo収集） | `47_archive_gap_check.sh`, `04_sync_archivelogs.sh` | △ 欠落チェックは実装済みだが、独立フェーズとしての管理はない |
 | フェーズ4（LogMiner解析・差分反映） | `31_pkg_delta_extract_src.sql`, `33_pkg_delta_apply_tgt.sql`, `40_cdc_cycle.sh`, `41_cdc_daemon.sh` | ○ 最も作り込まれている領域。ただしLogMiner実行場所が新設計と逆（1章参照） |
 | フェーズ5（1.0→2.0変換） | `41_pkg_transform_util.sql`, `42_pkg_transform.sql` | ○ 実装済み・E2E PASS（LOBパススルー含む） |
 
@@ -187,39 +207,37 @@ update "SRC_SCHEMA"."REGIONS" set "REGION_NAME" = 'LOGMINER_POC_TEST_UPD2'
 
 ## 6. 現行実装が新設計と既に整合している点
 
-- **三段構え（全量→差分→変換）の骨格**自体は新設計の5フェーズと矛盾しない。現行の
-  「初期ロード／差分同期／変換」はフェーズ1+2／3+4／5にほぼ1対1で対応する
+- **三段構え（全量→差分→変換）の骨格**自体は新設計の5フェーズと矛盾しない。
 - **差分適用の安全設計**（replay_category分類・ホワイトリスト・手動調査キュー、README §11）は、
   新設計のP4-17/P4-18（LOB差分方式）が今後決めるべき内容を、現行実装は既に
-  「周期的ターゲット再同期方式」として実装・E2E検証済みであり、**現行の方がここは先行している**
+  「周期的ターゲット再同期方式」として実装・E2E検証済みであり、**現行の方がここは先行している**。
 - **冪等性の設計思想**（`apply_ledger`によるTx単位の適用結果記録、`delta_apply_state`による再開点管理）は、
-  新設計のAPPLY_TASK/MIG_CHECKPOINTと設計思想は一致している。テーブル粒度が違うだけ
-- **DDL凍結の重要性の認識**は両者一致（README §9用語集「テーブル構成の凍結」、新設計12.1前提）
-- **二段階検証**（形式＋内容）は`scripts/49_two_stage_verify.sh`で実装済み（新設計VALIDATION_RUN/RESULTが目指す内容に近い）
+  新設計のAPPLY_TASK/MIG_CHECKPOINTと設計思想が一致している。テーブル粒度が違うだけ。
+- **DDL凍結の重要性の認識**は両者一致（README §9用語集「テーブル構成の凍結」、新設計12.1前提）。
+- **二段階検証**（形式＋内容）は`scripts/49_two_stage_verify.sh`で実装済み（新設計VALIDATION_RUN/RESULTが目指す内容に近い）。
 
 ---
 
-## 7. 優先度別ギャップまとめ
+## 7. 優先度別ギャップまとめ（v2 設計反映後）
 
-### 最優先（新設計採用可否そのものを左右する）
+### 最優先（v2 設計で解決済み・実装が必要）
 
-- **LogMiner実行場所の前提検証**（P4-01相当）：DB2.0側でPDBスキーマを含めて解析できるか。
-  現行実装はこれが不可能だったために移行元実行方式へ転換した経緯があり、
-  新設計が同じ壁にぶつからない根拠（Archived Redo埋め込みDictionary）を
-  実機で確認しない限り、新設計のアーキテクチャ全体が成立しない
+- **統合移行管理スキーマ（先行準備A 9テーブル）のDDL実装**：
+  設計書 v2.0（`docs/migration-control-schema-design.md`）に定義済み。
+  implementation-engineer が既存3テーブル版 DDL を全体再作成方式で v2.0 仕様に作り直す。
+- **BASELINE_SCN / MINING_START_SCN の分離**：既存最優先ギャップ（G2/G3/G4）の解消と直結。
+  MIGRATION_RUN に両列が定義済み（v2.0 設計書）。
+- **PKG_MIG_ADMIN の実装**：設計書 v2.0 §8 に API 仕様を定義済み。implementation-engineer が実装する。
 
-### 高（新設計を採用する場合、真っ先に作る基盤）
+### 高（v2 設計適用後に着手）
 
-- **統合移行管理スキーマの新設**：`MIGRATION_RUN`を親キーとした最小コア（`MIGRATION_RUN`,
-  `PHASE_STATUS`, `MIGRATION_OBJECT`）。現行の`cdc_schema`/`staging_ctl`/`log_schema`の
-  3分散管理を、少なくとも参照可能な形で束ねる
-- **BASELINE_SCN / MINING_START_SCNの分離**：既存最優先ギャップ（G2/G3/G4）の解消と直結
-- **DATAPUMP_JOB/DATAPUMP_FILE相当の管理テーブル**：現状シェルログのみで、SQLで状態を
-  追跡・突合できない
+- **DATAPUMP_JOB / DATAPUMP_FILE 相当の管理テーブル**：設計書 v2.0 に定義済み。実装未着手。
+- **ARCHIVE_LOG / ARCHIVE_LOG_COPY の永続台帳**：設計書 v2.0 に定義済み。実装未着手。
+  `DICTIONARY_BEGIN_FLAG`/`DICTIONARY_END_FLAG` による辞書ビルド成否の機械的確認が可能になる。
 
 ### 中（本番設計に向けて必要）
 
-- `ARCHIVE_LOG`/`ARCHIVE_LOG_COPY`の永続台帳化（現状はV$ARCHIVED_LOGへのその場クエリ）
+- `MIG_CHECKPOINT` テーブル（フェーズ3用途での先行追加可否を次段判断）
 - Migrationファイルサーバという独立中継層の検証（現行は`docker cp`直接搬送）
 - 8TB SSD搬送方式の比較PoC（未着手）
 - `KEY_MAPPING`の汎用化（現行`code_mapping`はステータスコード変換専用）
@@ -234,15 +252,19 @@ update "SRC_SCHEMA"."REGIONS" set "REGION_NAME" = 'LOGMINER_POC_TEST_UPD2'
 ## 8. 結論
 
 新設計は、現行実装が抱える**最優先の未解決ギャップ（COMMIT_SCN境界・基準SCN分離・統合管理スキーマ）**
-を正面から設計しようとしている点で価値が高い。一方で、**LogMiner実行場所という最も根本的な
-アーキテクチャ判断が現行実装の実証結果と逆**になっており、この前提（DB2.0側でPDBスキーマを
-含めて解析できること）を最優先で実機検証しない限り、他のすべての設計（移行管理スキーマ、
-フェーズ3のArchived Redo収集設計等）が「移行元でLogMinerを実行する」現行方式に対して
-そのまま転用できない可能性がある。
+を正面から設計しようとしている点で価値が高い。
 
-推奨する着手順：
-1. P4-01相当のPoC（DB2.0側でのPDBスキーマ解析可否）を最優先で実機確認
-2. 結果が「可能」なら、統合移行管理スキーマ（MIGRATION_RUN中心）の最小構成を新設し、
-   既存の`cdc_schema`/`staging_ctl`/`log_schema`をこれに接続する形で段階移行
-3. 結果が「不可能」なら、新設計のフェーズ3・4部分を現行の「移行元実行・結果搬送」方式に
-   合わせて修正した上で、管理スキーマ部分（3章）のみを新設計から取り込む
+LogMiner実行場所の問題（§1）は §1.1 の PoC により解決済み（新設計の DB2.0 側実行は条件付きで成立）。
+
+**移行管理スキーマについては以下の状態に至った**：
+
+1. 先行準備A対象の9テーブル設計が `docs/migration-control-schema-design.md` v2.0 に確定した。
+2. 実装は implementation-engineer が既存 DDL（3テーブル版）を v2.0 仕様で全体再作成することで実施する。
+3. LogMiner解析・差分適用・変換管理の詳細テーブル（LOGMINER_BATCH 等）は次段（フェーズ4実装前）に追加する。
+
+**推奨する次の着手順**：
+
+1. implementation-engineer による先行準備A DDL（9テーブル）の再作成実装
+2. PKG_MIG_ADMIN の PL/SQL 実装（設計書 v2.0 §8 仕様に基づく）
+3. フェーズ1・2（Data Pump Export/Import）の実機試験
+4. フェーズ3（Archived Redo 収集）の永続台帳連携実装
