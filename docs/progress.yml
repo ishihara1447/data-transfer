@@ -528,9 +528,9 @@ items:
   - 状態遷移表
   - 管理API
   - フェーズ別登録・更新SQL
-  status: in_progress
-  note: 先行準備Aの9テーブル＋API実装済。フェーズ4・5用テーブルは未
-  evidence: ''
+  status: done
+  note: フェーズ4用6テーブル（LOGMINER_BATCH/LOGMINER_BATCH_LOG/MINED_TRANSACTION/MINED_CHANGE/APPLY_BATCH/APPLY_TASK）を実装。ARCHIVE_LOGにMINING_STATUS/APPLY_STATUS列を追加。PKG_MIG_ADMIN v5.0（フェーズ4 API追加）を実装。
+  evidence: sql/migration_ctl/09_phase4_tables.sql + 10_pkg_mig_admin_phase4.sql。docs/phase4-design.md §3〜§5に設計仕様を記録。scripts/72_test_phase4_tables_e2e.sh T01〜T15 PASS（2026-07-27）。62/66/69 回帰テスト全PASS。
   updated: '2026-07-27'
 - id: P4-04
   phase: P4
@@ -587,9 +587,9 @@ items:
   deliverables:
   - 解析結果テーブル定義
   - 索引設計
-  status: in_progress
-  note: 旧方式の delta_queue はあり。新設計の MINED_TRANSACTION/CHANGE は未
-  evidence: ''
+  status: done
+  note: MINED_TRANSACTION（XID単位）・MINED_CHANGE（DML明細）のテーブル定義と索引設計を完了。MINED_CHANGEに4本の索引（TX・TBL・SCN・BST）を設計し、SQL_REDO/SQL_UNDOはCLOB型で定義（保持期間はTMP-12）。
+  evidence: sql/migration_ctl/09_phase4_tables.sql（MINED_TRANSACTION/MINED_CHANGE DDL + 索引）。docs/phase4-design.md §3.3/§3.4/§3.8に設計仕様・索引設計を記録。scripts/72_test_phase4_tables_e2e.sh T03/T04 PASS（2026-07-27）。
   updated: '2026-07-27'
 - id: P4-09
   phase: P4
@@ -727,9 +727,9 @@ items:
   title: チェックポイント設計
   deliverables:
   - チェックポイントテーブル・更新仕様
-  status: in_progress
-  note: 旧方式の delta_apply_state はあり。MIG_CHECKPOINT は未（TMP-03）
-  evidence: ''
+  status: done
+  note: MIG_CHECKPOINTは既に実装済（06_mig_checkpoint.sql）。フェーズ4用途としてLOGMINER_READER（解析済み位置）・APPLY_WRITER（適用済みCOMMIT_SCN）の2コンポーネントを定義。不変条件（差分DML+チェックポイント同一COMMIT）を設計に明記。
+  evidence: sql/migration_ctl/06_mig_checkpoint.sql（既存）。docs/phase4-design.md §7（チェックポイント設計）・§9（不変条件）。scripts/72_test_phase4_tables_e2e.sh T12/T13 PASS（2026-07-27）。
   updated: '2026-07-27'
 - id: P4-21
   phase: P4
@@ -739,9 +739,9 @@ items:
   deliverables:
   - エラー管理仕様
   - 再処理手順
-  status: in_progress
-  note: 旧方式は delta_manual_review_queue。ERROR_EVENT は整備中
-  evidence: ''
+  status: done
+  note: APPLY_TASKにRETRY_COUNT・ERROR_EVENT_ID・ERROR_MESSAGE列を設計。RETRY_APPLY_TASK（再試行可能）・ERROR_APPLY_TASK（再試行不可）のAPIで状態管理。再処理時は既存APPLY_TASKをRETRY状態に戻す設計（重複作成禁止）。ERROR_EVENTへの記録はERROR_EVENT_IDで関連付け。
+  evidence: sql/migration_ctl/09_phase4_tables.sql（APPLY_TASK定義）+ 10_pkg_mig_admin_phase4.sql（RETRY_APPLY_TASK/ERROR_APPLY_TASK API）。docs/phase4-design.md §8（エラー・再処理設計）。scripts/72_test_phase4_tables_e2e.sh T10 PASS（2026-07-27）。
   updated: '2026-07-27'
 - id: P4-22
   phase: P4

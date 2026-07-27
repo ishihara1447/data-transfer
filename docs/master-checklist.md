@@ -18,7 +18,7 @@
 |---|---:|
 | **決定・検証事項** | **75 件** |
 | **成果物（延べ）** | **158 件** |
-| 完了率 | **38.7%** |
+| 完了率 | **44.0%** |
 | この環境で進められる母数 | 69 件（75 − 本環境では不可 6） |
 
 ### 1.1 フェーズ別の内訳
@@ -28,16 +28,16 @@
 | フェーズ1：初回全量 Data Pump Export | 16 | 6 | 4 | 4 | 2 |
 | フェーズ2：初回全量 Data Pump Import | 16 | 9 | 3 | 2 | 2 |
 | フェーズ3：Archived Redo Log 出力・収集 | 7 | 5 | 1 | 1 | 0 |
-| フェーズ4：Archived Redo 解析・1.0スキーマ差分反映 | 26 | 6 | 10 | 8 | 2 |
+| フェーズ4：Archived Redo 解析・1.0スキーマ差分反映 | 26 | 10 | 6 | 8 | 2 |
 | フェーズ5：1.0スキーマ→2.0スキーマ 変換投入 | 10 | 3 | 3 | 4 | 0 |
-| **合計** | **75** | **29** | **21** | **19** | **6** |
+| **合計** | **75** | **33** | **17** | **19** | **6** |
 
 ### 1.2 優先度別（設計メモの定義）
 
 | 優先度 | 意味 | 件数 | うち完了 |
 |---|---|---:|---:|
-| A | 移行方式の成立、データ欠落防止、早期着手を左右する | 56 | 27 |
-| B | 性能、停止期間、再実行性、運用品質へ大きく影響する | 18 | 2 |
+| A | 移行方式の成立、データ欠落防止、早期着手を左右する | 56 | 30 |
+| B | 性能、停止期間、再実行性、運用品質へ大きく影響する | 18 | 3 |
 | C | 詳細実装または長期運用として必要になる | 1 | 0 |
 
 ---
@@ -48,7 +48,7 @@
 
 | 日付 | ✅完了 | 🟡着手 | ❌未着手 | 🔴不可 | 完了率 |
 |---|---:|---:|---:|---:|---:|
-| 2026-07-27 | 29 | 21 | 19 | 6 | 38.7% |
+| 2026-07-27 | 33 | 17 | 19 | 6 | 44.0% |
 
 > 記録は開始されたばかりです。2回目以降の実行で推移が見えます。
 
@@ -119,12 +119,12 @@
 |---|:-:|---|---|:-:|---|
 | P4-01 | A | PoC | DB1.0 Archived RedoをDB2.0で解析するPoC | 🟡 | PoC 実施済だが1表1UPDATE規模（UNV-06）。本格検証は未 |
 | P4-02 | B | 設計 | LogMiner実行構成 | 🟡 | 実行構成はPoCで確認。権限設計は未整理 |
-| P4-03 | A | 設計・実装 | 移行管理スキーマのテーブル構成 | 🟡 | 先行準備Aの9テーブル＋API実装済。フェーズ4・5用テーブルは未 |
+| P4-03 | A | 設計・実装 | 移行管理スキーマのテーブル構成 | ✅ | フェーズ4用6テーブル（LOGMINER_BATCH/LOGMINER_BATCH_LOG/MINED_TRANSACTION/MINED_CHANGE/APPLY_BATCH/APPLY_TASK）を実装。ARCHIVE_LOGにMINING_STATUS/APPLY_STATUS列を追加。PKG_MIG_ADMIN v5.0（フェーズ4 API追加）を実装。 ／ **根拠**: sql/migration_ctl/09_phase4_tables.sql + 10_pkg_mig_admin_phase4.sql。docs/phase4-design.md §3〜§5に設計仕様を記録。scripts/72_test_phase4_tables_e2e.sh T01〜T15 PASS（2026-07-27）。62/66/69 回帰テスト全PASS。 |
 | P4-04 | A | 設計・PoC | LogMiner処理単位 | ❌ | LogMinerバッチ分割設計は未（LOGMINER_BATCH 未実装） |
 | P4-05 | A | PoC・設計 | コミット済みトランザクションだけの抽出 | 🟡 | PoC では COMMITTED_DATA_ONLY 使用。旧方式は未使用（既存ギャップ G3） |
 | P4-06 | A | 調査 | 最大トランザクションの調査 | ❌ | 最大トランザクション調査は未実施 |
 | P4-07 | A | 設計 | 対象テーブル抽出方法 | ✅ | **根拠**: 移行先LogMiner PoC（6aeb1ab）で SEG_OWNER 抽出を確認。CON_ID フィルタが使えない知見を gap-analysis §1.2 に記録 |
-| P4-08 | B | 設計 | LogMiner解析結果の保存項目 | 🟡 | 旧方式の delta_queue はあり。新設計の MINED_TRANSACTION/CHANGE は未 |
+| P4-08 | B | 設計 | LogMiner解析結果の保存項目 | ✅ | MINED_TRANSACTION（XID単位）・MINED_CHANGE（DML明細）のテーブル定義と索引設計を完了。MINED_CHANGEに4本の索引（TX・TBL・SCN・BST）を設計し、SQL_REDO/SQL_UNDOはCLOB型で定義（保持期間はTMP-12）。 ／ **根拠**: sql/migration_ctl/09_phase4_tables.sql（MINED_TRANSACTION/MINED_CHANGE DDL + 索引）。docs/phase4-design.md §3.3/§3.4/§3.8に設計仕様・索引設計を記録。scripts/72_test_phase4_tables_e2e.sh T03/T04 PASS（2026-07-27）。 |
 | P4-09 | A | 設計・PoC | CSFによるSQL_REDO連結 | ❌ | CSF による SQL_REDO 連結は未実装 |
 | P4-10 | A | PoC・設計 | ROWIDを使わず主キーで行特定 | 🟡 | 旧方式は replay_category 分類＋手動調査キューで回避。主キー特定方式は未確立 |
 | P4-11 | A | 設計・検証 | トランザクション内の適用順序 | 🟡 | 旧方式は COMMIT_SCN 順で適用。新設計の適用順序仕様は未 |
@@ -136,8 +136,8 @@
 | P4-17 | A | 設計・PoC | BLOB差分方式 | ✅ | **根拠**: scripts/44_test_lob_resync_e2e.sh E2E PASS（コミット 5126c55） |
 | P4-18 | A | 調査・設計・PoC | CLOB差分方式 | ✅ | **根拠**: 同上（scripts/44_test_lob_resync_e2e.sh、CLOB を含む） |
 | P4-19 | B | 調査・設計 | その他特殊型の差分方式 | ❌ | その他特殊型の差分方式は未検討 |
-| P4-20 | A | 設計 | チェックポイント設計 | 🟡 | 旧方式の delta_apply_state はあり。MIG_CHECKPOINT は未（TMP-03） |
-| P4-21 | A | 設計 | エラー管理・再処理 | 🟡 | 旧方式は delta_manual_review_queue。ERROR_EVENT は整備中 |
+| P4-20 | A | 設計 | チェックポイント設計 | ✅ | MIG_CHECKPOINTは既に実装済（06_mig_checkpoint.sql）。フェーズ4用途としてLOGMINER_READER（解析済み位置）・APPLY_WRITER（適用済みCOMMIT_SCN）の2コンポーネントを定義。不変条件（差分DML+チェックポイント同一COMMIT）を設計に明記。 ／ **根拠**: sql/migration_ctl/06_mig_checkpoint.sql（既存）。docs/phase4-design.md §7（チェックポイント設計）・§9（不変条件）。scripts/72_test_phase4_tables_e2e.sh T12/T13 PASS（2026-07-27）。 |
+| P4-21 | A | 設計 | エラー管理・再処理 | ✅ | APPLY_TASKにRETRY_COUNT・ERROR_EVENT_ID・ERROR_MESSAGE列を設計。RETRY_APPLY_TASK（再試行可能）・ERROR_APPLY_TASK（再試行不可）のAPIで状態管理。再処理時は既存APPLY_TASKをRETRY状態に戻す設計（重複作成禁止）。ERROR_EVENTへの記録はERROR_EVENT_IDで関連付け。 ／ **根拠**: sql/migration_ctl/09_phase4_tables.sql（APPLY_TASK定義）+ 10_pkg_mig_admin_phase4.sql（RETRY_APPLY_TASK/ERROR_APPLY_TASK API）。docs/phase4-design.md §8（エラー・再処理設計）。scripts/72_test_phase4_tables_e2e.sh T10 PASS（2026-07-27）。 |
 | P4-22 | C | 設計 | LogMiner解析結果の保持期間 | ❌ | 保持期間・削除方針は未策定（旧方式のパージ実装は別物） |
 | P4-23 | A | PoC | 全体処理速度・追付き性能 | 🔴 | 追付き性能は本環境では評価不可（UNV-02） |
 | P4-24 | B | PoC・設計 | DB2.0リソース競合 | 🔴 | DB2.0 リソース競合は本環境では評価不可 |
@@ -227,12 +227,12 @@
 |---|:-:|---|
 | P4-01 | 🟡 | PoC結果報告 ／ 実行SQL ／ 制約・課題一覧 |
 | P4-02 | 🟡 | LogMiner実行構成図 ／ 権限設計 |
-| P4-03 | 🟡 | 管理スキーマDDL ／ ER図 ／ 状態遷移表 ／ 管理API ／ フェーズ別登録・更新SQL |
+| P4-03 | ✅ | 管理スキーマDDL ／ ER図 ／ 状態遷移表 ／ 管理API ／ フェーズ別登録・更新SQL |
 | P4-04 | ❌ | LogMinerバッチ分割設計 ／ 性能測定結果 |
 | P4-05 | 🟡 | オプション採用結果 ／ 制約事項 |
 | P4-06 | ❌ | 最大トランザクション調査結果 |
 | P4-07 | ✅ | 対象抽出SQL ／ 対象テーブル管理仕様 |
-| P4-08 | 🟡 | 解析結果テーブル定義 ／ 索引設計 |
+| P4-08 | ✅ | 解析結果テーブル定義 ／ 索引設計 |
 | P4-09 | ❌ | SQL_REDO連結ロジック ／ テスト結果 |
 | P4-10 | 🟡 | 行特定方式 ／ PoC結果 |
 | P4-11 | 🟡 | 適用順序仕様 ／ テストケース |
@@ -244,8 +244,8 @@
 | P4-17 | ✅ | BLOB差分移行設計 ／ LOB再取得手順 ／ 整合性方針 ／ PoC結果 |
 | P4-18 | ✅ | CLOB差分対応方針 ／ PoC結果 |
 | P4-19 | ❌ | 特殊型別差分反映方針 |
-| P4-20 | 🟡 | チェックポイントテーブル・更新仕様 |
-| P4-21 | 🟡 | エラー管理仕様 ／ 再処理手順 |
+| P4-20 | ✅ | チェックポイントテーブル・更新仕様 |
+| P4-21 | ✅ | エラー管理仕様 ／ 再処理手順 |
 | P4-22 | ❌ | データ保持・削除方針 |
 | P4-23 | 🔴 | 処理能力比較 ／ 追付き可否判定 |
 | P4-24 | 🔴 | 同時実行方針 ／ 推奨並列度 |

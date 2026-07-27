@@ -1,10 +1,11 @@
-# 統合移行管理スキーマ設計書（v3.0 - フェーズ1・2管理テーブル連携対応版）
+# 統合移行管理スキーマ設計書（v4.0 - フェーズ4管理テーブル追加対応版）
 
 - 作成日: 2026-07-26
-- 改訂日: 2026-07-27（v3.0）
+- 改訂日: 2026-07-27（v4.0）
 - 対象スキーマ: `migration_ctl`（DB2.0 同一PDB内）
-- 設計範囲: 先行準備A対象の9コアテーブル、フェーズ1・2対応の追加3テーブル・列追加・API追加、およびPKG_MIG_ADMIN API仕様
+- 設計範囲: 先行準備A対象の9コアテーブル、フェーズ1・2対応の追加3テーブル・列追加・API追加、フェーズ3対応のMIG_CHECKPOINT・API追加、フェーズ4対応の新規6テーブル（LOGMINER_BATCH / LOGMINER_BATCH_LOG / MINED_TRANSACTION / MINED_CHANGE / APPLY_BATCH / APPLY_TASK）・ARCHIVE_LOG列追加（MINING_STATUS / APPLY_STATUS）・API追加、およびPKG_MIG_ADMIN API仕様
 - 前提文書: `docs/private/design-memo-2-5phase.md`（原典・最優先）, `docs/oracle-compatibility-policy.md`, `docs/phase1-2-deliverables-and-flow.md`
+- 参照: `docs/phase4-design.md`（フェーズ4テーブル詳細設計・DDLスケッチ・API仕様）
 
 ---
 
@@ -15,6 +16,7 @@
 | v1.0 | 2026-07-26 | 初版（3テーブル：MIGRATION_RUN / PHASE_STATUS / MIGRATION_OBJECT） |
 | v2.0 | 2026-07-26 | 9テーブルへ拡張。DB Link前提の誤り是正。状態値をCOMPLETED統一。PKG_MIG_ADMIN API仕様追加。 |
 | v3.0 | 2026-07-27 | フェーズ1・2管理テーブル連携対応。新規3テーブル（ERROR_EVENT / VALIDATION_RUN / VALIDATION_RESULT）追加。既存4テーブルへの列追加（DATAPUMP_FILE / DATAPUMP_JOB / MIGRATION_OBJECT / PHASE_STATUS）。PKG_MIG_ADMIN API 8本追加（REGISTER_DATAPUMP_FILE 等）。DDL実装方式として 04/05 の新規ファイル追加方式を採用。 |
+| v4.0 | 2026-07-27 | フェーズ4管理テーブル群6本追加（LOGMINER_BATCH / LOGMINER_BATCH_LOG / MINED_TRANSACTION / MINED_CHANGE / APPLY_BATCH / APPLY_TASK）。ARCHIVE_LOG に MINING_STATUS / APPLY_STATUS 列追加。PKG_MIG_ADMIN API 追加（Phase4 LOGMINER・APPLY 系・バルク登録 3プロシージャ含む全体再定義）。フェーズ4対応の状態値追加。DDL実装方式として 09/10 の新規ファイル追加方式を採用。 |
 
 ---
 
@@ -169,7 +171,7 @@ ALTER TABLE DATAPUMP_FILE ADD CONSTRAINT CHK_DATAPUMP_FILE_STS
 
 ## 5. 状態値一覧（確定版）
 
-本節の状態値はすべての DDL・PL/SQL・運用手順で共通使用する。`DONE` は使用しない。v3.0 で追加・変更した値は末尾に（v3.0追加）と記す。
+本節の状態値はすべての DDL・PL/SQL・運用手順で共通使用する。`DONE` は使用しない。v3.0 / v4.0 で追加・変更した値は末尾に（vX.X追加）と記す。
 
 | テーブル | 列 | 許容値 |
 |---|---|---|
@@ -181,6 +183,8 @@ ALTER TABLE DATAPUMP_FILE ADD CONSTRAINT CHK_DATAPUMP_FILE_STS
 | `DATAPUMP_JOB_OBJECT` | `STATUS` | `PLANNED`, `RUNNING`, `COMPLETED`, `FAILED`, `SKIPPED` |
 | `DATAPUMP_FILE` | `STATUS` | `EXPECTED`, `CREATED`, `VERIFIED`, `CORRUPT`, `LOST`, `CONSUMED`（v3.0追加） |
 | `ARCHIVE_LOG` | `COLLECT_STATUS` | `EXPECTED`, `RECEIVED`, `VERIFIED`, `CORRUPT`, `MISSING`, `IGNORED` |
+| `ARCHIVE_LOG` | `MINING_STATUS`（v4.0追加列） | `PENDING`, `MINING`, `MINED`, `FAILED`（NULL許容。フェーズ4対象行のみ設定） |
+| `ARCHIVE_LOG` | `APPLY_STATUS`（v4.0追加列） | `PENDING`, `APPLIED`, `FAILED`（NULL許容。フェーズ4対象行のみ設定） |
 | `ARCHIVE_LOG_COPY` | `COPY_STATUS` | `EXPECTED`, `RECEIVED`, `VERIFIED`, `REGISTERED`, `CORRUPT`, `LOST`, `DELETED` |
 | `MIGRATION_OBJECT` | `STATUS` | `PENDING`, `IN_SCOPE`（v3.0追加）, `READY`（v3.0追加）, `IN_PROGRESS`, `COMPLETED`, `FAILED`, `SKIPPED` |
 | `MIG_STATUS_HISTORY` | （追記専用・更新・削除禁止） | — |
@@ -191,6 +195,15 @@ ALTER TABLE DATAPUMP_FILE ADD CONSTRAINT CHK_DATAPUMP_FILE_STS
 | `VALIDATION_RUN`（v3.0追加） | `VALIDATION_TYPE` | `ROW_COUNT`, `KEY_SET`, `AGGREGATE`, `LOB_HASH` |
 | `VALIDATION_RESULT`（v3.0追加） | `RESULT` | `PASS`, `WARN`, `FAIL` |
 | `VALIDATION_RESULT`（v3.0追加） | `APPROVED_FLAG` | `Y`, `N` |
+| `LOGMINER_BATCH`（v4.0追加） | `STATUS` | `PLANNED`, `RUNNING`, `COMPLETED`, `FAILED`, `RETRY` |
+| `LOGMINER_BATCH`（v4.0追加） | `DICT_METHOD` | `DICT_FROM_REDO_LOGS`, `DICT_FROM_ONLINE_CATALOG` |
+| `MINED_TRANSACTION`（v4.0追加） | `STATUS` | `MINED`, `QUEUED`, `APPLIED`, `SKIPPED`, `ERROR` |
+| `MINED_CHANGE`（v4.0追加） | `OPERATION` | `INSERT`, `UPDATE`, `DELETE`, `COMMIT`, `ROLLBACK` |
+| `MINED_CHANGE`（v4.0追加） | `CSF` | `0`（最終行・完結）, `1`（継続行） |
+| `MINED_CHANGE`（v4.0追加） | `STATUS` | `MINED`, `QUEUED`, `APPLIED`, `SKIPPED`, `ERROR` |
+| `APPLY_BATCH`（v4.0追加） | `STATUS` | `PLANNED`, `RUNNING`, `COMPLETED`, `FAILED`, `RETRY` |
+| `APPLY_TASK`（v4.0追加） | `STATUS` | `PENDING`, `RUNNING`, `APPLIED`, `RETRY`, `ERROR`, `SKIPPED` |
+| `APPLY_TASK`（v4.0追加） | `DML_TYPE` | `INSERT`, `UPDATE`, `DELETE` |
 
 **MIGRATION_OBJECT.STATUS 状態遷移補足**（v3.0追加）:
 
@@ -231,6 +244,43 @@ ARCHIVE_LOG_COPY.COPY_STATUS:
   EXPECTED → RECEIVED → VERIFIED → REGISTERED
                → CORRUPT / LOST
   REGISTERED / VERIFIED → DELETED（保持期限終了等）
+```
+
+**フェーズ4追加テーブルの状態遷移**（v4.0追加）:
+
+```
+LOGMINER_BATCH.STATUS:
+  PLANNED → RUNNING（BEGIN_LOGMINER_BATCH）
+  RUNNING → COMPLETED（COMPLETE_LOGMINER_BATCH）
+  RUNNING → FAILED（FAIL_LOGMINER_BATCH）
+  FAILED  → RETRY（手動）→ RUNNING（BEGIN_LOGMINER_BATCH で再開）
+
+ARCHIVE_LOG.MINING_STATUS（v4.0追加列）:
+  （NULL） → PENDING → MINING（SET_MINING_STATUS: 解析開始時）
+  MINING → MINED（SET_MINING_STATUS: 解析完了時）
+  MINING → FAILED（SET_MINING_STATUS: 解析失敗時）
+
+ARCHIVE_LOG.APPLY_STATUS（v4.0追加列）:
+  （NULL） → PENDING → APPLIED（SET_APPLY_STATUS: 全変更適用完了時）
+  PENDING → FAILED（SET_APPLY_STATUS: 適用エラー発生時）
+
+MINED_TRANSACTION.STATUS / MINED_CHANGE.STATUS（共通パターン）:
+  MINED → QUEUED（UPDATE_MINED_TX_STATUS / UPDATE_MINED_CHG_STATUS）
+  QUEUED → APPLIED / SKIPPED / ERROR
+
+APPLY_BATCH.STATUS:
+  PLANNED → RUNNING（BEGIN_APPLY_BATCH）
+  RUNNING → COMPLETED（COMPLETE_APPLY_BATCH）
+  RUNNING → FAILED（FAIL_APPLY_BATCH）
+  FAILED  → RETRY（手動）→ RUNNING（BEGIN_APPLY_BATCH で再開）
+
+APPLY_TASK.STATUS:
+  PENDING → RUNNING（START_APPLY_TASK: PENDING/RETRY→RUNNING）
+  RUNNING → APPLIED（COMPLETE_APPLY_TASK）
+  RUNNING → RETRY（RETRY_APPLY_TASK: 再試行可能エラー）
+  RUNNING → ERROR（ERROR_APPLY_TASK: 再試行不可エラー）
+  RETRY → RUNNING（START_APPLY_TASK で再開）
+  PENDING → SKIPPED（手動設定: 対象外DML）
 ```
 
 ---
@@ -1293,6 +1343,59 @@ ALTER TABLE PHASE_STATUS ADD CONSTRAINT CHK_PHASE_APPR_STS
 
 ---
 
+### 6.15 フェーズ4管理テーブル群（v4.0追加）
+
+本節はフェーズ4が追加する6テーブルおよび ARCHIVE_LOG への列追加の設計概要を示す。カラム定義・DDL スケッチ・制約名一覧・索引設計・API 仕様の詳細は `docs/phase4-design.md` を参照すること。
+
+#### 実装ファイル
+
+| ファイル | 内容 |
+|---|---|
+| `sql/migration_ctl/09_phase4_tables.sql` | 6テーブルの DDL（SEQUENCE・トリガー込み）、ARCHIVE_LOG への ALTER TABLE |
+| `sql/migration_ctl/10_pkg_mig_admin_phase4.sql` | PKG_MIG_ADMIN への Phase4 API 追加（PACKAGE BODY 全体再作成） |
+| `scripts/72_test_phase4_tables_e2e.sh` | E2E テスト |
+
+#### テーブル一覧と設計意図
+
+| テーブル名 | 主キー | 設計意図 |
+|---|---|---|
+| `LOGMINER_BATCH` | `LOGMINER_BATCH_ID`（SEQ採番） | LogMiner の1実行単位（SCN範囲）を管理。`(MIG_RUN_ID, BATCH_NO)` UNIQUE。STATUS: `PLANNED/RUNNING/COMPLETED/FAILED/RETRY` |
+| `LOGMINER_BATCH_LOG` | `BATCH_LOG_ID`（SEQ採番） | LOGMINER_BATCH × ARCHIVE_LOG の N:M 中間テーブル。ADD_LOGFILE の追加順序（ADD_ORDER）を記録。 |
+| `MINED_TRANSACTION` | `MINED_TRANSACTION_ID`（SEQ採番） | LogMiner が解析した XID 単位のトランザクション。重複防止キー: `(MIG_RUN_ID, XID, COMMIT_SCN)`。STATUS: `MINED/QUEUED/APPLIED/SKIPPED/ERROR` |
+| `MINED_CHANGE` | `MINED_CHANGE_ID`（SEQ採番） | DML 明細（V$LOGMNR_CONTENTS の1行に対応）。`SQL_REDO/SQL_UNDO` は CLOB 型。重複防止キー: `(MIG_RUN_ID, RS_ID, SSN)`。大量行のため索引4本（§3.8 参照）。 |
+| `APPLY_BATCH` | `APPLY_BATCH_ID`（SEQ採番） | 1.0スキーマへの差分適用の1実行単位（COMMIT_SCN 範囲）。`(MIG_RUN_ID, BATCH_NO)` UNIQUE。STATUS: `PLANNED/RUNNING/COMPLETED/FAILED/RETRY` |
+| `APPLY_TASK` | `APPLY_TASK_ID`（SEQ採番） | DML 単位の適用・再処理キュー。`KEY_PAYLOAD` に主キー値（テキスト形式）を保持しROWIDに非依存。STATUS: `PENDING/RUNNING/APPLIED/RETRY/ERROR/SKIPPED` |
+
+#### ARCHIVE_LOG への列追加
+
+`09_phase4_tables.sql` 内で `ALTER TABLE ADD` によって追加する。
+
+| 追加列名 | 型 | 説明 |
+|---|---|---|
+| `MINING_STATUS` | VARCHAR2(20) | LogMiner 解析状況。CHECK: `'PENDING','MINING','MINED','FAILED'`。制約名: `CHK_ARCHIVE_LOG_MNSTS`（22文字） |
+| `APPLY_STATUS` | VARCHAR2(20) | 差分適用状況。CHECK: `'PENDING','APPLIED','FAILED'`。制約名: `CHK_ARCHIVE_LOG_APSTS`（21文字） |
+
+既存行は NULL として追加され、後続の API（`SET_MINING_STATUS` / `SET_APPLY_STATUS`）で状態を設定する。
+
+#### Phase4 追加 API（概要）
+
+PKG_MIG_ADMIN に以下を追加する（詳細シグネチャ・仕様は `docs/phase4-design.md` §5 を参照）。
+
+| カテゴリ | プロシージャ名 |
+|---|---|
+| LOGMINER_BATCH | `REGISTER_LOGMINER_BATCH` / `BEGIN_LOGMINER_BATCH` / `COMPLETE_LOGMINER_BATCH` / `FAIL_LOGMINER_BATCH` / `ADD_BATCH_LOG` |
+| ARCHIVE_LOG 状態更新 | `SET_MINING_STATUS` / `SET_APPLY_STATUS` |
+| バルク登録 | `BULK_INS_MINED_TX` / `BULK_INS_MINED_CHG` / `BULK_INS_APPLY_TASKS` |
+| APPLY_BATCH | `REGISTER_APPLY_BATCH` / `BEGIN_APPLY_BATCH` / `COMPLETE_APPLY_BATCH` / `FAIL_APPLY_BATCH` |
+| APPLY_TASK | `QUEUE_APPLY_TASK` / `START_APPLY_TASK` / `COMPLETE_APPLY_TASK` / `RETRY_APPLY_TASK` / `ERROR_APPLY_TASK` |
+| MINED_TX/CHG 状態更新 | `UPDATE_MINED_TX_STATUS` / `UPDATE_MINED_CHG_STATUS` |
+
+エラー番号追加: `-20012`（フェーズ4テーブルの不正な状態遷移）
+
+Collection 型（バルク登録用）を PACKAGE SPEC で公開する: `T_MINED_TX_TBL` / `T_MINED_CHG_TBL` / `T_APPLY_TASK_TBL`
+
+---
+
 ## 7. ER 図（テキスト表現）
 
 v3.0 追加分（ERROR_EVENT / VALIDATION_RUN / VALIDATION_RESULT）と、既存テーブルへの列追加を反映した改訂版。
@@ -1790,20 +1893,20 @@ DB Link は不要。`log_schema` は DB2.0 の同一 PDB 内に存在する。
 
 ## 10. 次段実装予定（先行準備A 範囲外）
 
-以下のテーブルは先行準備A では作成しない。フェーズ4・5の実装前に追加する。
+### フェーズ4段1 で実装済み（v4.0 対応済み）
 
-### フェーズ4・5 実装前に追加（必須）
+以下は本文書 v4.0 での対応対象であり、`sql/migration_ctl/09_phase4_tables.sql` / `10_pkg_mig_admin_phase4.sql` として実装する（段1）。詳細は §6.15 および `docs/phase4-design.md` を参照。
 
-| テーブル | 目的 | 追加タイミング |
-|---|---|---|
-| `LOGMINER_BATCH` | LogMiner 解析バッチ単位の管理（開始/終了 SCN・使用ログリスト） | フェーズ4実装前 |
-| `MINED_TRANSACTION` | XID レベルのトランザクション表（COMMIT_SCN・状態） | フェーズ4実装前 |
-| `MINED_CHANGE` | LogMiner から抽出した DML 明細 | フェーズ4実装前 |
-| `APPLY_BATCH` | 差分適用のバッチ単位追跡 | フェーズ4実装前 |
-| `APPLY_TASK` | DML 単位の適用・再処理キュー | フェーズ4実装前 |
-| `MIG_CHECKPOINT` | コンポーネント・Thread 別の汎用チェックポイント | フェーズ4実装前（注記参照） |
+| テーブル | 目的 |
+|---|---|
+| `LOGMINER_BATCH` | LogMiner 解析バッチ単位の管理（SCN範囲・使用ログリスト） |
+| `LOGMINER_BATCH_LOG` | バッチ × Archived Redo 対応（ADD_LOGFILE 順序） |
+| `MINED_TRANSACTION` | XID レベルのコミット済みトランザクション（COMMIT_SCN・状態） |
+| `MINED_CHANGE` | LogMiner から抽出した DML 明細（SQL_REDO/SQL_UNDO は CLOB） |
+| `APPLY_BATCH` | 差分適用のバッチ単位追跡（COMMIT_SCN範囲） |
+| `APPLY_TASK` | DML 単位の適用・再処理キュー（KEY_PAYLOADでROWID非依存） |
 
-**MIG_CHECKPOINT の注記**: 設計メモ §2.2.2 はフェーズ3にも `MIG_CHECKPOINT` が関わると定義している（`COMPONENT_NAME='ARCHIVE_COLLECTOR'`）。フェーズ3実装時にフェーズ3用途で先行追加するかどうかを**次段で判断すること**。遅くともフェーズ4実装前には追加する。
+`MIG_CHECKPOINT` はフェーズ3実装時に先行追加済み（`sql/migration_ctl/06_mig_checkpoint.sql`）。フェーズ4では `COMPONENT_NAME='LOGMINER_READER'`（解析済み位置）/ `'APPLY_WRITER'`（適用済み位置）として使用する。
 
 ### 次段以降（本番設計フェーズ）
 
