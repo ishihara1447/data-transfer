@@ -1,0 +1,13 @@
+-- Phase 2: impdp パラメータ GRP02 (ORDERS)
+-- 実行: impdp $IMPDP_USER/$IMPDP_PASS@//oracle-tgt:1521/XEPDB1 parfile=05_impdp_grp02.par
+-- 注意: PARALLEL>=2 は 21c XE では ORA-39094 で失敗するため省略
+--       本番では PARALLEL 値（CPUライセンス依存）を設定すること
+--       COMPRESSION=ALL は 21c XE では使用不可のため省略
+userid=${IMPDP_USER}/${IMPDP_PASS}@//oracle-tgt:1521/XEPDB1
+dumpfile=${DUMPFILE_GRP02}
+directory=MIG_FS_DIR
+logfile=imp_grp02.log
+remap_schema=SRC_SCHEMA:STAGING_SCHEMA
+table_exists_action=REPLACE
+exclude=TRIGGER,GRANT,STATISTICS,INDEX
+content=ALL

@@ -1,0 +1,11 @@
+-- Phase 2: SQLFILE 生成パラメータ（DDL 事前確認用）
+-- 実行: impdp $IMPDP_USER/$IMPDP_PASS@//oracle-tgt:1521/XEPDB1 parfile=03_preview_ddl.par
+-- 注意: データは取り込まない（CONTENT=METADATA_ONLY + SQLFILE）
+-- 本番では別途確認が必要な項目:
+--   並列度設定（本番環境のCPU数・ライセンスに依存）
+userid=${IMPDP_USER}/${IMPDP_PASS}@//oracle-tgt:1521/XEPDB1
+dumpfile=${DUMPFILE_GRP01}
+directory=MIG_FS_DIR
+sqlfile=preview_ddl.sql
+logfile=preview_ddl.log
+remap_schema=SRC_SCHEMA:STAGING_SCHEMA
