@@ -114,9 +114,9 @@
 
 | # | 成果物 | 役割 | 状態 | 備考 |
 |---|---|---|:---:|---|
-| 2-1 | `01_create_migration_10_schema.sql` | DB2.0側1.0スキーマ・表領域の作成 | ✅ | `sql/phase2/01_create_staging_schema.sql`。STAGING_SCHEMA ユーザー・表領域・QUOTA を設定 |
+| 2-1 | `01_create_migration_10_schema.sql` | DB2.0側1.0スキーマ・表領域の作成 | ✅ | `sql/phase2/01_create_migration_10_schema.sql`。STAGING_SCHEMA ユーザー・表領域・QUOTA を設定 |
 | 2-2 | `02_grant_import_privileges.sql` | Import実行ユーザーの権限付与 | ✅ | `sql/phase2/02_grant_import_privileges.sql`。DATAPUMP_IMP_FULL_DATABASE 等を付与 |
-| 2-3 | `03_preview_ddl.par` | SQLFILE 生成用パラメータ | ✅ | `sql/phase2/03_preview_ddl_grp01.par` / `03_preview_ddl_grp02.par`。REMAP_SCHEMA 適用 |
+| 2-3 | `03_preview_ddl.par` | SQLFILE 生成用パラメータ | ✅ | `sql/phase2/03_preview_ddl.par`。REMAP_SCHEMA 適用 |
 | 2-4 | `04_import_ddl_preview.sql` | 生成DDLのレビュー支援 | ✅ | `sql/phase2/04_import_ddl_preview.sql`。生成SQL確認クエリと APPROVAL_STATUS 更新を含む |
 | 2-5 | `05_impdp_<job>.par` | ジョブ単位の impdp パラメータ | ✅ | `sql/phase2/05_impdp_grp01.par` / `05_impdp_grp02.par`。EXCLUDE=TRIGGER,GRANT,STATISTICS で12c互換を確保 |
 | 2-6 | `06_run_impdp.sh` | Import 実行ラッパー（管理テーブル更新込み） | ✅ | `scripts/65_run_impdp.sh`。TARGET_VERIFIED_AT更新・SQLFILE生成・CONSUME_DATAPUMP_FILE・検証・COMPLETE_PHASE を含む |
