@@ -80,7 +80,9 @@ LogMiner解析・差分適用・変換管理の詳細テーブル（LOGMINER_BAT
 
 設計メモ §2.2.2 では `MIG_CHECKPOINT` の主フェーズを「3・4・5」と定義しており、フェーズ3（Archived Redo収集）のチェックポイント管理にも使用される。このため、**先行準備A には含めないが、「フェーズ3実装前に先行追加するかどうかを次段で判断する」** と明記する。フェーズ4実装前には必ず追加する。
 
-**結論**: `MIG_CHECKPOINT` は先行準備Aの対象外。次段でフェーズ3用途の先行追加可否を判断すること。
+**結論（初版）**: `MIG_CHECKPOINT` は先行準備Aの対象外。次段でフェーズ3用途の先行追加可否を判断すること。
+
+**結論（更新: 2026-07-27）**: フェーズ3実装時に採用することが確定した。`sql/migration_ctl/06_mig_checkpoint.sql` として実装する。`COMPONENT_NAME='ARCHIVE_COLLECTOR'` で Thread 別進捗を管理し、フェーズ3完了条件（`MIG_CHECKPOINT.CHECKPOINT_SCN >= TARGET_END_SCN`）の機械判定に使用する。詳細設計は `docs/phase3-design.md` §3 を参照。
 
 ### 2.4 DDL変更方式：全体再作成
 
