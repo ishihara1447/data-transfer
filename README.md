@@ -276,7 +276,8 @@ data-transfer/
 │   ├── 60_ddl_freeze.sh              テーブル構成の凍結チェック
 │   ├── 61_ops_config.sh              運用パラメータ（しきい値等）の変更ツール
 │   ├── 62_test_migration_ctl_e2e.sh  移行管理スキーマのE2E検証（T01〜T15）
-│   └── 70_progress_report.sh         進捗レポート生成（progress.yml → チェックリスト・README）
+│   ├── 70_progress_report.sh         進捗レポート生成（progress.yml → チェックリスト・README）
+│   └── 71_migration_ctl_dashboard.sh 移行管理ダッシュボード生成（HTML＋Excel用CSV）
 └── data-generator/                   稼働中アプリの模擬（継続的にDMLを発行）
 ```
 
@@ -581,3 +582,36 @@ CUSTOMERS/ORDERS の差分そのものを自動反映する仕組みはまだ実
 - 本番想定は Oracle 12c のため `IDENTITY` 列を使わず、**SEQUENCE + BEFORE INSERT トリガー**で採番しています
   （[`docs/oracle-compatibility-policy.md`](docs/oracle-compatibility-policy.md)）
 - `MARK_ARCHIVE_READY` のSCN連続性チェックはPoC段階の簡略実装です。本番前に強化が必要です
+
+### 12.8 移行管理ダッシュボード（インストール不要）
+
+管理テーブルの中身は SQL でも見られますが、**1画面で把握するためのダッシュボード**を用意しています。
+
+```bash
+bash scripts/71_migration_ctl_dashboard.sh          # 最新の移行実行を表示
+bash scripts/71_migration_ctl_dashboard.sh 3        # MIG_RUN_ID=3 を表示
+```
+
+生成物は2種類です。**用途で使い分けてください。**
+
+| 生成物 | 用途 |
+|---|---|
+| `out/migration_ctl_dashboard.html` | **見るため。** 外部参照ゼロの単一HTMLファイル。**インストール不要・Webサーバ不要**でダブルクリックで開き、メール添付でそのまま配布できる |
+| `out/migration_ctl_csv/*.csv` | **こねるため。** テーブル別CSV。Excel でピボット・グラフ・独自集計をしたいとき |
+
+画面の内容:
+
+| セクション | 内容 |
+|---|---|
+| A. 移行実行サマリ | 全体状態と4種のSCN（基準／解析開始／最終同期／最終適用）。SCNの読み方の注記つき |
+| B. フェーズ進捗 | 先行準備A/B＋フェーズ1〜5 の進捗バー |
+| C. 移行対象オブジェクト | 対象表、1.0↔2.0対応、全量/CDC/変換フラグ、容量見積り |
+| D. Data Pump | ジョブ一覧と、生成された物理ファイル（チェックサム・状態） |
+| E. アーカイブログ | 論理ログ（Thread・Sequence・SCN範囲・辞書マーカー）と物理コピーを分けて表示 |
+| F〜H | 検証結果、エラーイベント、状態変更履歴 |
+
+各表は**列ヘッダのクリックでソート**、**絞り込み検索**が使えます（すべて埋め込みJSで動作し、通信は行いません）。
+
+> **なぜ Excel でダッシュボードを作らないのか**：数式と条件付き書式で組むと保守が重くなり、
+> 列が1つ増えるたびにブック全体を作り直すことになります。**見るのはHTML・分析はExcel**と
+> 役割を分け、どちらも同じスクリプトから生成する形にしています。
