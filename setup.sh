@@ -248,3 +248,6 @@ if [ "${MODE}" != "full" ]; then
   echo "  ・初期ロード＋常駐起動まで自動化: ./setup.sh --full"
 fi
 echo "  ・コンテナ状態:       ${COMPOSE} ps"
+
+# /migfs 権限設定（named volume は起動後に oracle:oinstall への chown が必要）
+bash scripts/00_init_migfs_perms.sh

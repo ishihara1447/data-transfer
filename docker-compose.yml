@@ -8,6 +8,7 @@ services:
       - ORACLE_PASSWORD=${ORACLE_SRC_PASSWORD}
     volumes:
       - oracle-src-data:/opt/oracle/oradata
+      - migfs:/migfs
     networks:
       - cdc-migration-net
     restart: unless-stopped
@@ -28,6 +29,7 @@ services:
       - ORACLE_PASSWORD=${ORACLE_TGT_PASSWORD}
     volumes:
       - oracle-tgt-data:/opt/oracle/oradata
+      - migfs:/migfs
     networks:
       - cdc-migration-net
     restart: unless-stopped
@@ -60,6 +62,7 @@ services:
 volumes:
   oracle-src-data:
   oracle-tgt-data:
+  migfs:
 
 networks:
   cdc-migration-net:

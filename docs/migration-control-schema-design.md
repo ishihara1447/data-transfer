@@ -1,10 +1,10 @@
-# 統合移行管理スキーマ設計書（v2.0 - 先行準備A：9テーブル改訂版）
+# 統合移行管理スキーマ設計書（v3.0 - フェーズ1・2管理テーブル連携対応版）
 
 - 作成日: 2026-07-26
-- 改訂日: 2026-07-26（v2.0）
+- 改訂日: 2026-07-27（v3.0）
 - 対象スキーマ: `migration_ctl`（DB2.0 同一PDB内）
-- 設計範囲: 先行準備A対象の9コアテーブルおよびPKG_MIG_ADMIN API仕様
-- 前提文書: `docs/private/design-memo-2-5phase.md`（原典・最優先）, `docs/oracle-compatibility-policy.md`
+- 設計範囲: 先行準備A対象の9コアテーブル、フェーズ1・2対応の追加3テーブル・列追加・API追加、およびPKG_MIG_ADMIN API仕様
+- 前提文書: `docs/private/design-memo-2-5phase.md`（原典・最優先）, `docs/oracle-compatibility-policy.md`, `docs/phase1-2-deliverables-and-flow.md`
 
 ---
 
@@ -14,6 +14,7 @@
 |---|---|---|
 | v1.0 | 2026-07-26 | 初版（3テーブル：MIGRATION_RUN / PHASE_STATUS / MIGRATION_OBJECT） |
 | v2.0 | 2026-07-26 | 9テーブルへ拡張。DB Link前提の誤り是正。状態値をCOMPLETED統一。PKG_MIG_ADMIN API仕様追加。 |
+| v3.0 | 2026-07-27 | フェーズ1・2管理テーブル連携対応。新規3テーブル（ERROR_EVENT / VALIDATION_RUN / VALIDATION_RESULT）追加。既存4テーブルへの列追加（DATAPUMP_FILE / DATAPUMP_JOB / MIGRATION_OBJECT / PHASE_STATUS）。PKG_MIG_ADMIN API 8本追加（REGISTER_DATAPUMP_FILE 等）。DDL実装方式として 04/05 の新規ファイル追加方式を採用。 |
 
 ---
 
@@ -34,7 +35,15 @@ v1.0 設計には以下の誤りが判明したため、本バージョン（v2.
 
 ### 1.2 設計対象の位置づけ
 
-先行準備A（フェーズ0相当）で作成するコアテーブル群。これらは全フェーズ横断の管理基盤となる。LogMiner解析・差分適用・変換管理の詳細テーブル（LOGMINER_BATCH 等）は次段（フェーズ4実装前）に追加する。
+**v2.0**: 先行準備A（フェーズ0相当）で作成するコアテーブル群9本。全フェーズ横断の管理基盤となる。
+
+**v3.0 追加**: フェーズ1（Data Pump Export）とフェーズ2（Data Pump Import）を管理テーブル連携ありで動かすために必要な追加設計を盛り込んだ。具体的には以下のとおり。
+
+- 新規テーブル3本（ERROR_EVENT / VALIDATION_RUN / VALIDATION_RESULT）: `docs/phase1-2-deliverables-and-flow.md` §3.3「管理スキーマ側の不足」で「フェーズ2完了判定に直接必要」と確認されたため、「次段以降」から格上げ。
+- 既存4テーブルへの列追加（DATAPUMP_FILE / DATAPUMP_JOB / MIGRATION_OBJECT / PHASE_STATUS）: フェーズ2の Import パラメータ管理・ファイル消費追跡・承認記録に必要。
+- PKG_MIG_ADMIN 追加 API 8本: ファイル管理（REGISTER / VERIFY / CONSUME）、検証管理（START / COMPLETE / RECORD）、エラー記録（RAISE_ERROR_EVENT）、フェーズ完了機械判定（COMPLETE_PHASE）。
+
+LogMiner解析・差分適用・変換管理の詳細テーブル（LOGMINER_BATCH 等）は引き続き次段（フェーズ4実装前）に追加する。
 
 ---
 
@@ -83,6 +92,42 @@ v1.0 設計には以下の誤りが判明したため、本バージョン（v2.
 
 **結論**: 実装エンジニアは既存 DDL ファイルを v2.0 仕様で全体再作成する。既存テーブルを DROP してから CREATE する方式で実施する。
 
+### 2.5 DDL変更方式（フェーズ1・2追加分）
+
+v3.0 で追加する DDL（新規テーブル3本・列追加・CHECK制約変更・新規パッケージプロシージャ）は、**既存ファイルを修正せず新規ファイルとして追加**する方式とする。
+
+| ファイル | 内容 |
+|---|---|
+| `sql/migration_ctl/04_phase1_2_additions.sql` | 新テーブル3本（ERROR_EVENT / VALIDATION_RUN / VALIDATION_RESULT）、ALTER TABLE による列追加、CHECK制約の DROP → ADD |
+| `sql/migration_ctl/05_pkg_mig_admin_phase1_2.sql` | PKG_MIG_ADMIN へのプロシージャ追加（PACKAGE BODY を OR REPLACE で全体再作成） |
+
+**採用理由**:
+
+1. 既存テーブルにはE2E通過済みのデータが存在する可能性があり、DROP → 全再作成（§2.4 方式）を適用すると既存テストデータが消える。
+2. 新規列は `ALTER TABLE ADD` で追加でき、既存行には NULL が入るため後方互換を保てる。
+3. CHECK制約の値変更（STATUS に `CONSUMED` / `IN_SCOPE` / `READY` 追加）は `ALTER TABLE DROP CONSTRAINT → ADD CONSTRAINT` で対応できる。開発環境では既存データが0件の前提で制約を再作成する。
+
+**ALTER TABLE による列追加の構文例**（Oracle 12c 互換）:
+
+```sql
+ALTER TABLE DATAPUMP_FILE ADD (
+    CONSUMED_BY_IMPORT_JOB_ID NUMBER(10),
+    CONSUMED_AT               TIMESTAMP,
+    TARGET_VERIFIED_AT        TIMESTAMP
+);
+```
+
+**CHECK制約変更の構文例**:
+
+```sql
+-- 既存制約を削除してから再作成する（開発環境・既存データなし前提）
+ALTER TABLE DATAPUMP_FILE DROP CONSTRAINT CHK_DATAPUMP_FILE_STS;
+ALTER TABLE DATAPUMP_FILE ADD CONSTRAINT CHK_DATAPUMP_FILE_STS
+    CHECK (STATUS IN ('EXPECTED','CREATED','VERIFIED','CORRUPT','LOST','CONSUMED'));
+```
+
+**結論**: フェーズ1・2対応の追加 DDL は `04_phase1_2_additions.sql`、追加パッケージは `05_pkg_mig_admin_phase1_2.sql` として新規作成する。既存 `02` / `03` は変更しない。
+
 ---
 
 ## 3. 前提・制約
@@ -122,19 +167,46 @@ v1.0 設計には以下の誤りが判明したため、本バージョン（v2.
 
 ## 5. 状態値一覧（確定版）
 
-本節の状態値はすべての DDL・PL/SQL・運用手順で共通使用する。`DONE` は使用しない。
+本節の状態値はすべての DDL・PL/SQL・運用手順で共通使用する。`DONE` は使用しない。v3.0 で追加・変更した値は末尾に（v3.0追加）と記す。
 
 | テーブル | 列 | 許容値 |
 |---|---|---|
 | `MIGRATION_RUN` | `STATUS` | `CREATED`, `ARCHIVE_READY`, `BASELINE_FIXED`, `EXPORTING`, `IMPORTING`, `RUNNING`, `COMPLETED`, `FAILED`, `ABORTED` |
 | `PHASE_STATUS` | `STATUS` | `NOT_STARTED`, `RUNNING`, `COMPLETED`, `FAILED`, `PAUSED` |
+| `PHASE_STATUS` | `APPROVAL_STATUS`（v3.0追加） | `PENDING`, `APPROVED`, `REJECTED`（NULL許容） |
 | `DATAPUMP_JOB` | `STATUS` | `PLANNED`, `RUNNING`, `COMPLETED`, `FAILED`, `RETRY` |
+| `DATAPUMP_JOB` | `TABLE_EXISTS_ACTION`（v3.0追加） | `SKIP`, `APPEND`, `TRUNCATE`, `REPLACE`（NULL許容） |
 | `DATAPUMP_JOB_OBJECT` | `STATUS` | `PLANNED`, `RUNNING`, `COMPLETED`, `FAILED`, `SKIPPED` |
-| `DATAPUMP_FILE` | `STATUS` | `EXPECTED`, `CREATED`, `VERIFIED`, `CORRUPT`, `LOST` |
+| `DATAPUMP_FILE` | `STATUS` | `EXPECTED`, `CREATED`, `VERIFIED`, `CORRUPT`, `LOST`, `CONSUMED`（v3.0追加） |
 | `ARCHIVE_LOG` | `COLLECT_STATUS` | `EXPECTED`, `RECEIVED`, `VERIFIED`, `CORRUPT`, `MISSING`, `IGNORED` |
 | `ARCHIVE_LOG_COPY` | `COPY_STATUS` | `EXPECTED`, `RECEIVED`, `VERIFIED`, `REGISTERED`, `CORRUPT`, `LOST`, `DELETED` |
-| `MIGRATION_OBJECT` | `STATUS` | `PENDING`, `IN_PROGRESS`, `COMPLETED`, `FAILED`, `SKIPPED` |
+| `MIGRATION_OBJECT` | `STATUS` | `PENDING`, `IN_SCOPE`（v3.0追加）, `READY`（v3.0追加）, `IN_PROGRESS`, `COMPLETED`, `FAILED`, `SKIPPED` |
 | `MIG_STATUS_HISTORY` | （追記専用・更新・削除禁止） | — |
+| `ERROR_EVENT`（v3.0追加） | `SEVERITY` | `FATAL`, `ERROR`, `WARN` |
+| `ERROR_EVENT`（v3.0追加） | `RESOLVE_STATUS` | `OPEN`, `RESOLVED`, `IGNORED` |
+| `VALIDATION_RUN`（v3.0追加） | `STATUS` | `PLANNED`, `RUNNING`, `COMPLETED`, `FAILED` |
+| `VALIDATION_RUN`（v3.0追加） | `OVERALL_RESULT` | `PASS`, `WARN`, `FAIL`（NULL許容） |
+| `VALIDATION_RUN`（v3.0追加） | `VALIDATION_TYPE` | `ROW_COUNT`, `KEY_SET`, `AGGREGATE`, `LOB_HASH` |
+| `VALIDATION_RESULT`（v3.0追加） | `RESULT` | `PASS`, `WARN`, `FAIL` |
+| `VALIDATION_RESULT`（v3.0追加） | `APPROVED_FLAG` | `Y`, `N` |
+
+**MIGRATION_OBJECT.STATUS 状態遷移補足**（v3.0追加）:
+
+```
+PENDING     → IN_SCOPE（移行対象スコープ確定時）
+IN_SCOPE    → READY（Export グループ割当済み・Import パラメータ確定時）
+READY       → IN_PROGRESS（処理開始時）
+IN_PROGRESS → COMPLETED / FAILED / SKIPPED
+```
+
+**DATAPUMP_FILE.STATUS 状態遷移補足**（v3.0追加）:
+
+```
+EXPECTED → CREATED（ファイル生成後 REGISTER_DATAPUMP_FILE 呼び出し時）
+CREATED  → VERIFIED（VERIFY_DATAPUMP_FILE でサイズ・チェックサム確定時）
+VERIFIED → CONSUMED（CONSUME_DATAPUMP_FILE でImportジョブが消費時）
+CREATED / VERIFIED → CORRUPT / LOST（異常時）
+```
 
 **状態遷移の基本パターン**:
 
@@ -913,7 +985,315 @@ END;
 
 ---
 
+### 6.11 ERROR_EVENT（エラーイベント台帳）
+
+#### 設計意図
+
+全フェーズ横断のエラーイベントを1行1件で記録する。Export失敗・Import失敗・チェックサム不一致等あらゆる障害を統一フォーマットで蓄積し、`RESOLVE_STATUS` で解消状況を追跡する。`COMPLETE_PHASE` の完了判定では「`SEVERITY IN ('FATAL','ERROR')` かつ `RESOLVE_STATUS='OPEN'` のレコードが存在しないこと」を条件とする（§8.3 参照）。
+
+#### カラム定義
+
+| カラム名 | 型 | NOT NULL | デフォルト | 説明 |
+|---|---|---|---|---|
+| ERROR_EVENT_ID | NUMBER(10) | YES | SEQ採番 | 主キー |
+| MIG_RUN_ID | NUMBER(10) | YES | — | FK: `MIGRATION_RUN.MIG_RUN_ID` |
+| PHASE_CODE | VARCHAR2(20) | NO | NULL | 発生フェーズ（`PHASE1` 等） |
+| SEVERITY | VARCHAR2(20) | YES | — | `FATAL` / `ERROR` / `WARN` |
+| COMPONENT_NAME | VARCHAR2(100) | NO | NULL | 発生コンポーネント名（例: `EXPDP_GRP01`） |
+| DATAPUMP_JOB_ID | NUMBER(10) | NO | NULL | FK: `DATAPUMP_JOB.DATAPUMP_JOB_ID`（関連ジョブ） |
+| ORA_ERROR_CODE | VARCHAR2(20) | NO | NULL | ORA-xxxxx 等のエラーコード |
+| ERROR_MESSAGE | VARCHAR2(4000) | NO | NULL | エラー詳細メッセージ |
+| RESOLVE_STATUS | VARCHAR2(20) | YES | `'OPEN'` | `OPEN` / `RESOLVED` / `IGNORED` |
+| RESOLVED_AT | TIMESTAMP | NO | NULL | 解消日時 |
+| RESOLVE_NOTE | VARCHAR2(4000) | NO | NULL | 解消メモ |
+| CREATED_AT | TIMESTAMP | YES | SYSTIMESTAMP | レコード作成日時 |
+| UPDATED_AT | TIMESTAMP | NO | NULL | 最終更新日時 |
+
+#### DDL（設計ドラフト）
+
+```sql
+CREATE SEQUENCE SEQ_ERROR_EVENT
+    START WITH 1 INCREMENT BY 1 NOCACHE NOCYCLE;
+
+CREATE TABLE ERROR_EVENT (
+    ERROR_EVENT_ID   NUMBER(10)     NOT NULL,
+    MIG_RUN_ID       NUMBER(10)     NOT NULL,
+    PHASE_CODE       VARCHAR2(20),
+    SEVERITY         VARCHAR2(20)   NOT NULL,
+    COMPONENT_NAME   VARCHAR2(100),
+    DATAPUMP_JOB_ID  NUMBER(10),
+    ORA_ERROR_CODE   VARCHAR2(20),
+    ERROR_MESSAGE    VARCHAR2(4000),
+    RESOLVE_STATUS   VARCHAR2(20)   DEFAULT 'OPEN' NOT NULL,
+    RESOLVED_AT      TIMESTAMP,
+    RESOLVE_NOTE     VARCHAR2(4000),
+    CREATED_AT       TIMESTAMP      DEFAULT SYSTIMESTAMP NOT NULL,
+    UPDATED_AT       TIMESTAMP,
+    CONSTRAINT PK_ERROR_EVENT
+        PRIMARY KEY (ERROR_EVENT_ID),
+    CONSTRAINT FK_ERROR_EVENT_RUN
+        FOREIGN KEY (MIG_RUN_ID)
+        REFERENCES MIGRATION_RUN (MIG_RUN_ID),
+    CONSTRAINT FK_ERROR_EVENT_DP_JOB
+        FOREIGN KEY (DATAPUMP_JOB_ID)
+        REFERENCES DATAPUMP_JOB (DATAPUMP_JOB_ID),
+    CONSTRAINT CHK_ERROR_EVENT_SEV
+        CHECK (SEVERITY IN ('FATAL','ERROR','WARN')),
+    CONSTRAINT CHK_ERROR_EVENT_RSTS
+        CHECK (RESOLVE_STATUS IN ('OPEN','RESOLVED','IGNORED'))
+);
+
+CREATE OR REPLACE TRIGGER TRG_ERROR_EVENT_BI
+BEFORE INSERT ON ERROR_EVENT
+FOR EACH ROW
+BEGIN
+    IF :NEW.ERROR_EVENT_ID IS NULL THEN
+        SELECT SEQ_ERROR_EVENT.NEXTVAL
+        INTO :NEW.ERROR_EVENT_ID FROM DUAL;
+    END IF;
+END;
+/
+```
+
+---
+
+### 6.12 VALIDATION_RUN（検証実行管理テーブル）
+
+#### 設計意図
+
+フェーズ2完了後（およびフェーズ4・5での将来拡張）に実施する検証の実行単位を管理する。`COMPLETE_PHASE` の完了判定では「対象フェーズの必須 `VALIDATION_RUN` が `COMPLETED` かつ `OVERALL_RESULT='PASS'`」を条件とする。
+
+#### カラム定義
+
+| カラム名 | 型 | NOT NULL | デフォルト | 説明 |
+|---|---|---|---|---|
+| VALIDATION_RUN_ID | NUMBER(10) | YES | SEQ採番 | 主キー |
+| MIG_RUN_ID | NUMBER(10) | YES | — | FK: `MIGRATION_RUN.MIG_RUN_ID` |
+| PHASE_CODE | VARCHAR2(20) | YES | — | 検証対象フェーズ（`PHASE2` 等） |
+| VALIDATION_TYPE | VARCHAR2(50) | YES | — | `ROW_COUNT` / `KEY_SET` / `AGGREGATE` / `LOB_HASH` |
+| STATUS | VARCHAR2(20) | YES | `'PLANNED'` | `PLANNED` / `RUNNING` / `COMPLETED` / `FAILED` |
+| OVERALL_RESULT | VARCHAR2(10) | NO | NULL | `PASS` / `WARN` / `FAIL`（COMPLETED 時に設定） |
+| STARTED_AT | TIMESTAMP | NO | NULL | 検証開始日時 |
+| FINISHED_AT | TIMESTAMP | NO | NULL | 検証完了日時 |
+| REMARKS | VARCHAR2(4000) | NO | NULL | 備考 |
+| CREATED_AT | TIMESTAMP | YES | SYSTIMESTAMP | レコード作成日時 |
+| UPDATED_AT | TIMESTAMP | NO | NULL | 最終更新日時 |
+
+#### DDL（設計ドラフト）
+
+```sql
+CREATE SEQUENCE SEQ_VALIDATION_RUN
+    START WITH 1 INCREMENT BY 1 NOCACHE NOCYCLE;
+
+CREATE TABLE VALIDATION_RUN (
+    VALIDATION_RUN_ID  NUMBER(10)     NOT NULL,
+    MIG_RUN_ID         NUMBER(10)     NOT NULL,
+    PHASE_CODE         VARCHAR2(20)   NOT NULL,
+    VALIDATION_TYPE    VARCHAR2(50)   NOT NULL,
+    STATUS             VARCHAR2(20)   DEFAULT 'PLANNED' NOT NULL,
+    OVERALL_RESULT     VARCHAR2(10),
+    STARTED_AT         TIMESTAMP,
+    FINISHED_AT        TIMESTAMP,
+    REMARKS            VARCHAR2(4000),
+    CREATED_AT         TIMESTAMP      DEFAULT SYSTIMESTAMP NOT NULL,
+    UPDATED_AT         TIMESTAMP,
+    CONSTRAINT PK_VALIDATION_RUN
+        PRIMARY KEY (VALIDATION_RUN_ID),
+    CONSTRAINT FK_VALIDATION_RUN_RUN
+        FOREIGN KEY (MIG_RUN_ID)
+        REFERENCES MIGRATION_RUN (MIG_RUN_ID),
+    CONSTRAINT CHK_VALID_RUN_TYPE
+        CHECK (VALIDATION_TYPE IN
+               ('ROW_COUNT','KEY_SET','AGGREGATE','LOB_HASH')),
+    CONSTRAINT CHK_VALID_RUN_STATUS
+        CHECK (STATUS IN
+               ('PLANNED','RUNNING','COMPLETED','FAILED')),
+    CONSTRAINT CHK_VALID_RUN_RESULT
+        CHECK (OVERALL_RESULT IS NULL
+               OR OVERALL_RESULT IN ('PASS','WARN','FAIL'))
+);
+
+CREATE OR REPLACE TRIGGER TRG_VALIDATION_RUN_BI
+BEFORE INSERT ON VALIDATION_RUN
+FOR EACH ROW
+BEGIN
+    IF :NEW.VALIDATION_RUN_ID IS NULL THEN
+        SELECT SEQ_VALIDATION_RUN.NEXTVAL
+        INTO :NEW.VALIDATION_RUN_ID FROM DUAL;
+    END IF;
+END;
+/
+```
+
+---
+
+### 6.13 VALIDATION_RESULT（検証結果明細テーブル）
+
+#### 設計意図
+
+`VALIDATION_RUN` 配下の検証項目1件につき1行で結果を記録する。`RESULT='FAIL'` かつ `APPROVED_FLAG='N'` のレコードが残っていると `COMPLETE_PHASE` の完了判定が通らない。FAIL を許容する場合は `APPROVED_FLAG='Y'` にセットし `APPROVE_NOTE` に承認根拠を記録する。
+
+#### カラム定義
+
+| カラム名 | 型 | NOT NULL | デフォルト | 説明 |
+|---|---|---|---|---|
+| VALIDATION_RESULT_ID | NUMBER(10) | YES | SEQ採番 | 主キー |
+| VALIDATION_RUN_ID | NUMBER(10) | YES | — | FK: `VALIDATION_RUN.VALIDATION_RUN_ID` |
+| MIG_OBJECT_ID | NUMBER(10) | NO | NULL | FK: `MIGRATION_OBJECT.MIG_OBJECT_ID`（対象テーブル） |
+| CHECK_NAME | VARCHAR2(100) | YES | — | 検証項目名（例: `ROW_COUNT_REGIONS`） |
+| EXPECTED_VALUE | VARCHAR2(4000) | NO | NULL | 期待値 |
+| ACTUAL_VALUE | VARCHAR2(4000) | NO | NULL | 実測値 |
+| RESULT | VARCHAR2(10) | YES | — | `PASS` / `WARN` / `FAIL` |
+| APPROVED_FLAG | CHAR(1) | YES | `'N'` | `Y` / `N`（FAIL 承認フラグ。PASS/WARN 時は `N` のまま） |
+| APPROVED_AT | TIMESTAMP | NO | NULL | 承認日時 |
+| APPROVE_NOTE | VARCHAR2(4000) | NO | NULL | 承認メモ |
+| CREATED_AT | TIMESTAMP | YES | SYSTIMESTAMP | レコード作成日時 |
+| UPDATED_AT | TIMESTAMP | NO | NULL | 最終更新日時 |
+
+#### DDL（設計ドラフト）
+
+```sql
+CREATE SEQUENCE SEQ_VALIDATION_RESULT
+    START WITH 1 INCREMENT BY 1 NOCACHE NOCYCLE;
+
+CREATE TABLE VALIDATION_RESULT (
+    VALIDATION_RESULT_ID  NUMBER(10)     NOT NULL,
+    VALIDATION_RUN_ID     NUMBER(10)     NOT NULL,
+    MIG_OBJECT_ID         NUMBER(10),
+    CHECK_NAME            VARCHAR2(100)  NOT NULL,
+    EXPECTED_VALUE        VARCHAR2(4000),
+    ACTUAL_VALUE          VARCHAR2(4000),
+    RESULT                VARCHAR2(10)   NOT NULL,
+    APPROVED_FLAG         CHAR(1)        DEFAULT 'N' NOT NULL,
+    APPROVED_AT           TIMESTAMP,
+    APPROVE_NOTE          VARCHAR2(4000),
+    CREATED_AT            TIMESTAMP      DEFAULT SYSTIMESTAMP NOT NULL,
+    UPDATED_AT            TIMESTAMP,
+    CONSTRAINT PK_VALIDATION_RESULT
+        PRIMARY KEY (VALIDATION_RESULT_ID),
+    CONSTRAINT FK_VALID_RESULT_VRUN
+        FOREIGN KEY (VALIDATION_RUN_ID)
+        REFERENCES VALIDATION_RUN (VALIDATION_RUN_ID),
+    CONSTRAINT FK_VALID_RESULT_OBJ
+        FOREIGN KEY (MIG_OBJECT_ID)
+        REFERENCES MIGRATION_OBJECT (MIG_OBJECT_ID),
+    CONSTRAINT CHK_VALID_RESULT_RES
+        CHECK (RESULT IN ('PASS','WARN','FAIL')),
+    CONSTRAINT CHK_VALID_RESULT_APPR
+        CHECK (APPROVED_FLAG IN ('Y','N'))
+);
+
+CREATE OR REPLACE TRIGGER TRG_VALIDATION_RESULT_BI
+BEFORE INSERT ON VALIDATION_RESULT
+FOR EACH ROW
+BEGIN
+    IF :NEW.VALIDATION_RESULT_ID IS NULL THEN
+        SELECT SEQ_VALIDATION_RESULT.NEXTVAL
+        INTO :NEW.VALIDATION_RESULT_ID FROM DUAL;
+    END IF;
+END;
+/
+```
+
+---
+
+### 6.14 既存テーブル改修（フェーズ1・2対応）
+
+本節は v3.0 で既存4テーブルに追加する列と CHECK 制約変更をまとめる。実装は `sql/migration_ctl/04_phase1_2_additions.sql` に収録し、既存 DDL ファイルは変更しない（§2.5 参照）。
+
+#### 6.14.1 DATAPUMP_FILE 列追加
+
+| 追加列名 | 型 | NULL許容 | 説明 |
+|---|---|---|---|
+| `CONSUMED_BY_IMPORT_JOB_ID` | NUMBER(10) | YES | Import時にこのファイルを消費したジョブID（FK: DATAPUMP_JOB） |
+| `CONSUMED_AT` | TIMESTAMP | YES | ダンプ消費日時（CONSUME_DATAPUMP_FILE 実行時） |
+| `TARGET_VERIFIED_AT` | TIMESTAMP | YES | DB2.0側でチェックサムを再計算・確認した日時 |
+
+`STATUS` の CHECK 制約変更: `'CONSUMED'` を追加。
+
+```sql
+-- 列追加
+ALTER TABLE DATAPUMP_FILE ADD (
+    CONSUMED_BY_IMPORT_JOB_ID NUMBER(10),
+    CONSUMED_AT               TIMESTAMP,
+    TARGET_VERIFIED_AT        TIMESTAMP
+);
+
+-- FK 追加（CONSUMED_BY_IMPORT_JOB_ID → DATAPUMP_JOB）
+ALTER TABLE DATAPUMP_FILE ADD CONSTRAINT FK_DP_FILE_CONSM_JOB
+    FOREIGN KEY (CONSUMED_BY_IMPORT_JOB_ID)
+    REFERENCES DATAPUMP_JOB (DATAPUMP_JOB_ID);
+
+-- STATUS の CHECK制約を再作成（CONSUMED 追加）
+ALTER TABLE DATAPUMP_FILE DROP CONSTRAINT CHK_DATAPUMP_FILE_STS;
+ALTER TABLE DATAPUMP_FILE ADD CONSTRAINT CHK_DATAPUMP_FILE_STS
+    CHECK (STATUS IN
+           ('EXPECTED','CREATED','VERIFIED','CORRUPT','LOST','CONSUMED'));
+```
+
+#### 6.14.2 DATAPUMP_JOB 列追加
+
+| 追加列名 | 型 | NULL許容 | 説明 |
+|---|---|---|---|
+| `REMAP_SCHEMA_DEF` | VARCHAR2(500) | YES | REMAP_SCHEMA 定義（例: `SRC_SCHEMA:STAGING_SCHEMA`） |
+| `REMAP_TABLESPACE_DEF` | VARCHAR2(500) | YES | REMAP_TABLESPACE 定義 |
+| `TABLE_EXISTS_ACTION` | VARCHAR2(20) | YES | `SKIP` / `APPEND` / `TRUNCATE` / `REPLACE` |
+| `PARAMETER_TEXT` | VARCHAR2(4000) | YES | 完全な impdp パラメータテキスト（確定値を保存） |
+| `RESULT_MESSAGE` | VARCHAR2(4000) | YES | 実行結果サマリ・承認事項・再実行時の元ファイル方針 |
+
+```sql
+ALTER TABLE DATAPUMP_JOB ADD (
+    REMAP_SCHEMA_DEF      VARCHAR2(500),
+    REMAP_TABLESPACE_DEF  VARCHAR2(500),
+    TABLE_EXISTS_ACTION   VARCHAR2(20),
+    PARAMETER_TEXT        VARCHAR2(4000),
+    RESULT_MESSAGE        VARCHAR2(4000)
+);
+
+ALTER TABLE DATAPUMP_JOB ADD CONSTRAINT CHK_DP_JOB_TEA
+    CHECK (TABLE_EXISTS_ACTION IS NULL
+           OR TABLE_EXISTS_ACTION IN ('SKIP','APPEND','TRUNCATE','REPLACE'));
+```
+
+#### 6.14.3 MIGRATION_OBJECT STATUS 拡張
+
+`STATUS` の許容値に `IN_SCOPE`・`READY` を追加する。状態遷移の意味は §5 参照。
+
+```sql
+ALTER TABLE MIGRATION_OBJECT DROP CONSTRAINT CHK_MIG_OBJ_STATUS;
+ALTER TABLE MIGRATION_OBJECT ADD CONSTRAINT CHK_MIG_OBJ_STATUS
+    CHECK (STATUS IN
+           ('PENDING','IN_SCOPE','READY',
+            'IN_PROGRESS','COMPLETED','FAILED','SKIPPED'));
+```
+
+#### 6.14.4 PHASE_STATUS 列追加
+
+フェーズ2の SQLFILE レビュー承認等、フェーズ単位の承認情報を記録する列を追加する。
+
+| 追加列名 | 型 | NULL許容 | 説明 |
+|---|---|---|---|
+| `APPROVAL_STATUS` | VARCHAR2(20) | YES | `PENDING` / `APPROVED` / `REJECTED`（承認フロー管理） |
+| `APPROVED_BY` | VARCHAR2(100) | YES | 承認者名またはシステム名 |
+| `APPROVED_AT` | TIMESTAMP | YES | 承認日時 |
+
+```sql
+ALTER TABLE PHASE_STATUS ADD (
+    APPROVAL_STATUS  VARCHAR2(20),
+    APPROVED_BY      VARCHAR2(100),
+    APPROVED_AT      TIMESTAMP
+);
+
+ALTER TABLE PHASE_STATUS ADD CONSTRAINT CHK_PHASE_APPR_STS
+    CHECK (APPROVAL_STATUS IS NULL
+           OR APPROVAL_STATUS IN ('PENDING','APPROVED','REJECTED'));
+```
+
+---
+
 ## 7. ER 図（テキスト表現）
+
+v3.0 追加分（ERROR_EVENT / VALIDATION_RUN / VALIDATION_RESULT）と、既存テーブルへの列追加を反映した改訂版。
 
 ```
 migration_ctl スキーマ（DB2.0 同一PDB内・DB Link 不使用）
@@ -932,6 +1312,7 @@ MIGRATION_RUN
     │         MIG_RUN_ID FK
     │         PHASE_CODE（PREP_A/PREP_B/PHASE1-5）
     │         STATUS（NOT_STARTED/RUNNING/COMPLETED/FAILED/PAUSED）
+    │         [v3.0] APPROVAL_STATUS / APPROVED_BY / APPROVED_AT
     │
     ├─1:N─ MIGRATION_OBJECT
     │         MIG_OBJECT_ID PK
@@ -943,14 +1324,17 @@ MIGRATION_RUN
     │         PRIMARY_KEY_COLUMNS / HAS_LOB_FLAG
     │         ESTIMATED_ROWS / ESTIMATED_DATA_BYTES / ESTIMATED_LOB_BYTES
     │         EXPORT_GROUP_CODE / APPLY_ORDER_NO / TRANSFORM_ORDER_NO
+    │         STATUS（PENDING/IN_SCOPE/READY/IN_PROGRESS/COMPLETED/FAILED/SKIPPED）[v3.0拡張]
     │         ─ ─ ─► cdc_schema.CDC_TABLE_CATALOG（同一PDB・SOURCE_TABLE_NAMEで結合）
     │
     ├─1:N─ DATAPUMP_JOB
     │         DATAPUMP_JOB_ID PK
     │         MIG_RUN_ID FK
     │         JOB_NAME / OPERATION / STATUS / BASELINE_SCN
+    │         [v3.0] REMAP_SCHEMA_DEF / REMAP_TABLESPACE_DEF
+    │         [v3.0] TABLE_EXISTS_ACTION / PARAMETER_TEXT / RESULT_MESSAGE
     │         │
-    │         └─1:N─ DATAPUMP_JOB_OBJECT
+    │         ├─1:N─ DATAPUMP_JOB_OBJECT
     │         │         DP_JOB_OBJECT_ID PK
     │         │         DATAPUMP_JOB_ID FK
     │         │         MIG_OBJECT_ID FK → MIGRATION_OBJECT
@@ -961,6 +1345,8 @@ MIGRATION_RUN
     │                   MIG_RUN_ID FK
     │                   DATAPUMP_JOB_ID FK（nullable）
     │                   FILE_ROLE / STATUS / FILE_NAME / CHECKSUM_*
+    │                   [v3.0] CONSUMED_BY_IMPORT_JOB_ID FK → DATAPUMP_JOB
+    │                   [v3.0] CONSUMED_AT / TARGET_VERIFIED_AT
     │
     ├─1:N─ ARCHIVE_LOG
     │         ARCHIVE_LOG_ID PK
@@ -975,16 +1361,41 @@ MIGRATION_RUN
     │                   STORAGE_LOCATION / FILE_PATH / CHECKSUM_*
     │                   COPY_STATUS
     │
-    └─1:N─ MIG_STATUS_HISTORY
-              HISTORY_ID PK
+    ├─1:N─ MIG_STATUS_HISTORY
+    │         HISTORY_ID PK
+    │         MIG_RUN_ID FK
+    │         TABLE_NAME / RECORD_ID
+    │         OLD_STATUS / NEW_STATUS / CHANGED_BY / CHANGED_AT
+    │         （追記専用・UPDATE・DELETE 禁止）
+    │
+    ├─1:N─ ERROR_EVENT [v3.0]
+    │         ERROR_EVENT_ID PK
+    │         MIG_RUN_ID FK
+    │         PHASE_CODE / SEVERITY（FATAL/ERROR/WARN）
+    │         COMPONENT_NAME / ORA_ERROR_CODE / ERROR_MESSAGE
+    │         DATAPUMP_JOB_ID FK → DATAPUMP_JOB（nullable）
+    │         RESOLVE_STATUS（OPEN/RESOLVED/IGNORED）
+    │         RESOLVED_AT / RESOLVE_NOTE
+    │
+    └─1:N─ VALIDATION_RUN [v3.0]
+              VALIDATION_RUN_ID PK
               MIG_RUN_ID FK
-              TABLE_NAME / RECORD_ID
-              OLD_STATUS / NEW_STATUS / CHANGED_BY / CHANGED_AT
-              （追記専用・UPDATE・DELETE 禁止）
+              PHASE_CODE / VALIDATION_TYPE / STATUS
+              OVERALL_RESULT（PASS/WARN/FAIL）
+              STARTED_AT / FINISHED_AT
+              │
+              └─1:N─ VALIDATION_RESULT [v3.0]
+                        VALIDATION_RESULT_ID PK
+                        VALIDATION_RUN_ID FK
+                        MIG_OBJECT_ID FK → MIGRATION_OBJECT（nullable）
+                        CHECK_NAME / EXPECTED_VALUE / ACTUAL_VALUE
+                        RESULT（PASS/WARN/FAIL）
+                        APPROVED_FLAG（Y/N） / APPROVED_AT / APPROVE_NOTE
 
 凡例:
   1:N ─── : FK 制約あり（migration_ctl スキーマ内）
   ─ ─ ─►  : ソフト参照（FK 制約なし・同一 PDB 内クロススキーマ参照）
+  [v3.0]  : v3.0 で追加した要素
 ```
 
 ---
@@ -1171,6 +1582,193 @@ PROCEDURE LOG_STATUS_CHANGE (
 3. **BASELINE_SCN・TARGET_END_SCN は一度設定後に上書き禁止**。既設定時は例外を発生させる。
 4. **差分 DML と MIG_CHECKPOINT の更新は同一 DB トランザクションで COMMIT する**（フェーズ4以降。先行準備Aでは MIG_CHECKPOINT が未実装のため対象外）。
 5. **CREATE_RUN は MIGRATION_RUN 1行 + PHASE_STATUS 7行を同一トランザクションで作成する**。途中失敗時はロールバックする。
+6. **DATAPUMP_FILE.STATUS='CONSUMED' にできるのは VERIFY_DATAPUMP_FILE による 'VERIFIED' 確定後のみ**（CONSUME_DATAPUMP_FILE の事前条件）。[v3.0]
+7. **VERIFY_DATAPUMP_FILE でチェックサムが NULL の場合は STATUS を VERIFIED にせず例外を発生させる**（不変条件継続）。[v3.0]
+
+---
+
+### 8.3 フェーズ1・2追加 API 仕様（v3.0）
+
+本節は v3.0 で `PKG_MIG_ADMIN` に追加するプロシージャの設計仕様を定義する。実装は `sql/migration_ctl/05_pkg_mig_admin_phase1_2.sql` に収録し、PACKAGE BODY を `CREATE OR REPLACE` で全体再作成する方式とする。
+
+エラー番号追加規約（v3.0）:
+
+| 番号 | 意味 |
+|---|---|
+| -20005 | ファイル検証失敗（チェックサム NULL 等）- 既存と共通 |
+| -20010 | COMPLETE_PHASE 完了条件未達 |
+
+---
+
+#### REGISTER_DATAPUMP_FILE
+
+```
+PROCEDURE REGISTER_DATAPUMP_FILE (
+    p_run_id           IN  NUMBER,
+    p_job_id           IN  NUMBER,
+    p_file_role        IN  VARCHAR2,
+    p_file_name        IN  VARCHAR2,
+    p_file_path        IN  VARCHAR2 DEFAULT NULL,
+    p_storage_location IN  VARCHAR2 DEFAULT NULL,
+    p_file_id          OUT NUMBER
+);
+```
+
+- `DATAPUMP_FILE` を1行 INSERT する（`STATUS='CREATED'`）。
+- `DATAPUMP_JOB_ID = p_job_id`、`MIG_RUN_ID = p_run_id` を設定する。
+- 採番された `DATAPUMP_FILE_ID` を `p_file_id` で返す。
+- `FILE_SIZE_BYTES` / `CHECKSUM_ALGO` / `CHECKSUM_VALUE` は NULL のまま（後続の `VERIFY_DATAPUMP_FILE` で設定）。
+- `MIG_STATUS_HISTORY` に `NEW_STATUS='CREATED'` で記録する。
+- COMMIT して終了する。
+
+---
+
+#### VERIFY_DATAPUMP_FILE
+
+```
+PROCEDURE VERIFY_DATAPUMP_FILE (
+    p_file_id          IN NUMBER,
+    p_file_size_bytes  IN NUMBER,
+    p_checksum_algo    IN VARCHAR2,
+    p_checksum_value   IN VARCHAR2
+);
+```
+
+- ガード条件: `p_checksum_value IS NULL` の場合は例外（-20005）を発生させ、`STATUS` を変更しない。
+- 事前条件: `DATAPUMP_FILE.STATUS = 'CREATED'`。それ以外は -20002 例外。
+- 合格時: `FILE_SIZE_BYTES` / `CHECKSUM_ALGO` / `CHECKSUM_VALUE` / `VERIFIED_AT = SYSTIMESTAMP` を設定し、`STATUS = 'VERIFIED'` に更新する。
+- `MIG_STATUS_HISTORY` に `OLD_STATUS='CREATED'`, `NEW_STATUS='VERIFIED'` で記録する。
+- COMMIT して終了する。
+
+---
+
+#### CONSUME_DATAPUMP_FILE
+
+```
+PROCEDURE CONSUME_DATAPUMP_FILE (
+    p_file_id       IN NUMBER,
+    p_import_job_id IN NUMBER
+);
+```
+
+- 事前条件: `DATAPUMP_FILE.STATUS = 'VERIFIED'`。それ以外は -20002 例外を発生させる。
+- `CONSUMED_BY_IMPORT_JOB_ID = p_import_job_id`、`CONSUMED_AT = SYSTIMESTAMP`、`STATUS = 'CONSUMED'`、`UPDATED_AT = SYSTIMESTAMP` を更新する。
+- `MIG_STATUS_HISTORY` に `OLD_STATUS='VERIFIED'`, `NEW_STATUS='CONSUMED'` で記録する。
+- COMMIT して終了する。
+
+---
+
+#### START_VALIDATION_RUN
+
+```
+PROCEDURE START_VALIDATION_RUN (
+    p_run_id              IN  NUMBER,
+    p_phase_code          IN  VARCHAR2,
+    p_validation_type     IN  VARCHAR2,
+    p_validation_run_id   OUT NUMBER
+);
+```
+
+- `VALIDATION_RUN` を1行 INSERT する（`STATUS='RUNNING'`、`STARTED_AT = SYSTIMESTAMP`）。
+- 採番された `VALIDATION_RUN_ID` を `p_validation_run_id` で返す。
+- `MIG_STATUS_HISTORY` に `NEW_STATUS='RUNNING'` で記録する。
+- COMMIT して終了する。
+
+---
+
+#### COMPLETE_VALIDATION_RUN
+
+```
+PROCEDURE COMPLETE_VALIDATION_RUN (
+    p_validation_run_id IN NUMBER,
+    p_overall_result    IN VARCHAR2
+);
+```
+
+- 事前条件: `VALIDATION_RUN.STATUS = 'RUNNING'`。それ以外は -20002 例外。
+- `p_overall_result` は `'PASS'` / `'WARN'` / `'FAIL'` のいずれか（それ以外は -20002 例外）。
+- `STATUS = 'COMPLETED'`、`OVERALL_RESULT = p_overall_result`、`FINISHED_AT = SYSTIMESTAMP`、`UPDATED_AT = SYSTIMESTAMP` を更新する。
+- `MIG_STATUS_HISTORY` に記録する。
+- COMMIT して終了する。
+
+---
+
+#### RECORD_VALIDATION_RESULT
+
+```
+PROCEDURE RECORD_VALIDATION_RESULT (
+    p_validation_run_id IN  NUMBER,
+    p_mig_object_id     IN  NUMBER DEFAULT NULL,
+    p_check_name        IN  VARCHAR2,
+    p_expected_value    IN  VARCHAR2 DEFAULT NULL,
+    p_actual_value      IN  VARCHAR2 DEFAULT NULL,
+    p_result            IN  VARCHAR2,
+    p_result_id         OUT NUMBER
+);
+```
+
+- `VALIDATION_RESULT` を1行 INSERT する（`APPROVED_FLAG = 'N'` 固定）。
+- 採番された `VALIDATION_RESULT_ID` を `p_result_id` で返す。
+- 本 API は COMMIT しない。呼び出し元のトランザクション内で一括 COMMIT することを想定する。
+- 大量の検証結果を記録する場合は、本 API を FORALL 等のバルク処理に置き換えてもよい。
+
+---
+
+#### RAISE_ERROR_EVENT
+
+```
+PROCEDURE RAISE_ERROR_EVENT (
+    p_run_id          IN  NUMBER,
+    p_phase_code      IN  VARCHAR2 DEFAULT NULL,
+    p_severity        IN  VARCHAR2,
+    p_component_name  IN  VARCHAR2 DEFAULT NULL,
+    p_datapump_job_id IN  NUMBER   DEFAULT NULL,
+    p_ora_error_code  IN  VARCHAR2 DEFAULT NULL,
+    p_error_message   IN  VARCHAR2 DEFAULT NULL,
+    p_event_id        OUT NUMBER
+);
+```
+
+- `ERROR_EVENT` を1行 INSERT する（`RESOLVE_STATUS = 'OPEN'`、`CREATED_AT = SYSTIMESTAMP`）。
+- 採番された `ERROR_EVENT_ID` を `p_event_id` で返す。
+- `PHASE_STATUS` の更新（FAILED / PAUSED 遷移）は呼び出し元が別途行う。本 API はエラー記録のみを担当する。
+- COMMIT して終了する。
+
+---
+
+#### COMPLETE_PHASE
+
+```
+PROCEDURE COMPLETE_PHASE (
+    p_run_id     IN NUMBER,
+    p_phase_code IN VARCHAR2
+);
+```
+
+- `PHASE_STATUS.STATUS` を `COMPLETED` へ遷移させる前に、以下の完了条件を SQL で機械評価する。いずれか1つでも満たさない場合は `-20010` 例外を発生させ、失敗理由を SQLERRM メッセージに含める。
+- 全条件を満たした場合のみ `PHASE_STATUS.STATUS = 'COMPLETED'`・`FINISHED_AT = SYSTIMESTAMP` を更新し、`MIG_STATUS_HISTORY` に記録して COMMIT する。
+
+**PHASE1 完了判定条件**（以下を全て SQL で確認する）:
+
+| # | 判定条件 | 対象テーブル/列 |
+|---|---|---|
+| 1 | そのRUNに属する `OPERATION='EXPORT'` の `DATAPUMP_JOB` が全て `STATUS='COMPLETED'` | `DATAPUMP_JOB` |
+| 2 | そのRUNに属する `DATAPUMP_JOB_OBJECT`（EXPORTジョブ配下）が全て `COMPLETED` または `SKIPPED` | `DATAPUMP_JOB_OBJECT` |
+| 3 | そのRUNに属する `FILE_ROLE='DUMP'` の `DATAPUMP_FILE` が全て `STATUS IN ('VERIFIED','CONSUMED')` | `DATAPUMP_FILE` |
+| 4 | 全 EXPORTジョブの `DATAPUMP_JOB.BASELINE_SCN` が `MIGRATION_RUN.BASELINE_SCN` と一致（NULL でない） | `DATAPUMP_JOB`, `MIGRATION_RUN` |
+| 5 | `SEVERITY IN ('FATAL','ERROR')` かつ `RESOLVE_STATUS='OPEN'` の `ERROR_EVENT` がそのRUNに存在しない | `ERROR_EVENT` |
+| 6 | そのRUNの全 `MIGRATION_OBJECT` が少なくとも1つの EXPORTジョブに割り当て済み（`EXPORT_GROUP_CODE IS NOT NULL`） | `MIGRATION_OBJECT` |
+
+**PHASE2 完了判定条件**（以下を全て SQL で確認する）:
+
+| # | 判定条件 | 対象テーブル/列 |
+|---|---|---|
+| 1 | そのRUNに属する `OPERATION='IMPORT'` の `DATAPUMP_JOB` が全て `STATUS='COMPLETED'` | `DATAPUMP_JOB` |
+| 2 | そのRUNに属する `DATAPUMP_JOB_OBJECT`（IMPORTジョブ配下）が全て `COMPLETED` または `SKIPPED` | `DATAPUMP_JOB_OBJECT` |
+| 3 | Importで使用した `FILE_ROLE='DUMP'` の `DATAPUMP_FILE` に `TARGET_VERIFIED_AT IS NULL` のものが存在しない（DB2.0側でチェックサム再計算済み） | `DATAPUMP_FILE` |
+| 4 | そのRUNの `PHASE_CODE='PHASE2'` に属する `VALIDATION_RUN` が `STATUS='COMPLETED'` かつ `OVERALL_RESULT='PASS'` | `VALIDATION_RUN` |
+| 5 | そのRUNの `VALIDATION_RESULT` に `RESULT='FAIL'` かつ `APPROVED_FLAG='N'` のレコードが存在しない | `VALIDATION_RESULT` |
+| 6 | `SEVERITY IN ('FATAL','ERROR')` かつ `RESOLVE_STATUS='OPEN'` の `ERROR_EVENT` がそのRUNに存在しない | `ERROR_EVENT` |
 
 ---
 
@@ -1212,8 +1810,8 @@ DB Link は不要。`log_schema` は DB2.0 の同一 PDB 内に存在する。
 | `MIGRATION_OBJECT_PHASE_STATUS` | 表×フェーズ単位の詳細状態管理（§2.2 判断事項参照） |
 | `TRANSFORM_BATCH` | 変換バッチ単位の管理 |
 | `KEY_MAPPING` | 汎用キー対応表（旧キー↔新キー） |
-| `VALIDATION_RUN` / `VALIDATION_RESULT` | 検証実行・結果の構造化記録 |
-| `ERROR_EVENT` | 全フェーズ横断エラーイベント台帳 |
+
+**v3.0 での変更**: `VALIDATION_RUN` / `VALIDATION_RESULT` / `ERROR_EVENT` は、フェーズ2完了判定に直接必要と判明したため、「次段以降」から**フェーズ1・2対応（v3.0）として本設計書の対象に格上げ**した（§3.3「管理スキーマ側の不足」参照）。
 
 ---
 
@@ -1241,6 +1839,8 @@ DB Link は不要。`log_schema` は DB2.0 の同一 PDB 内に存在する。
 
 ## 12. 設計レビューチェックリスト
 
+**v2.0 からの継続確認事項**:
+
 - [x] 移行ロジックが PL/SQL 内に完結しているか（本設計は DDL/データモデルのみ。PL/SQL 実装は implementation-engineer の担当）
 - [x] DB Link を使用しない設計か（§3.1：すべてのスキーマは DB2.0 同一 PDB 内）
 - [x] ステージングテーブルを使用しない設計か
@@ -1248,12 +1848,11 @@ DB Link は不要。`log_schema` は DB2.0 の同一 PDB 内に存在する。
 - [x] TARGET_END_SCN・LAST_APPLIED_SCN が追加されているか（§15.1 対応）
 - [x] PoC / REHEARSAL / PRODUCTION の実行種別が区別できるか（`RUN_TYPE` 列）
 - [x] 7フェーズ分の状態追跡テーブルが設計されているか（`PHASE_STATUS.PHASE_CODE`）
-- [x] 先行準備A対象が9テーブルであることが明記されているか
 - [x] 状態値に DONE が使われておらず COMPLETED で統一されているか
 - [x] MIG_STATUS_HISTORY が追記専用で設計されているか（§8.2 不変条件）
 - [x] ファイル実体なしで VERIFIED にしない不変条件が記載されているか（§8.2）
 - [x] IDENTITY 列を使用していないか（SEQUENCE + BEFORE INSERT トリガーで代替済み）
-- [x] 全識別子が Oracle 12.1 の30文字上限以内か（§6 各 DDL ドラフト参照）
+- [x] 全識別子が Oracle 12.1 の30文字上限以内か（§6 各 DDL ドラフト参照・§6.14 ALTER TABLE 制約名含む）
 - [x] JSON 関数・FETCH FIRST 等の禁止構文を使用していないか
 - [x] クロススキーマ FK を設けず、既存テーブルへの影響がゼロか
 - [x] 途中失敗後の再実行方針が記載されているか（§6.3 利用パターン参照）
@@ -1261,4 +1860,20 @@ DB Link は不要。`log_schema` は DB2.0 の同一 PDB 内に存在する。
 - [x] PHASE_STATUS 7行採用の根拠が記録されているか（§2.1）
 - [x] MIGRATION_OBJECT_PHASE_STATUS が次段であることが明記されているか（§2.2・§10）
 - [x] MIG_CHECKPOINT が先行準備A外であることと次段判断事項が明記されているか（§2.3・§10）
-- [x] DDL 変更方式（全体再作成）の根拠が記録されているか（§2.4）
+- [x] DDL 変更方式（全体再作成 v2.0 / 新規ファイル追加 v3.0）の根拠が記録されているか（§2.4・§2.5）
+
+**v3.0 追加確認事項**:
+
+- [x] フェーズ1・2の完了判定条件が SQL で機械評価される設計になっているか（`COMPLETE_PHASE` §8.3）
+- [x] `ERROR_EVENT` にエラー原因を追える情報（PHASE_CODE / SEVERITY / ORA_ERROR_CODE / ERROR_MESSAGE）が含まれるか（§6.11）
+- [x] `COMPLETE_PHASE` の PHASE1 判定に未解消 FATAL/ERROR イベントのチェックが含まれるか（§8.3）
+- [x] `COMPLETE_PHASE` の PHASE2 判定に検証結果（VALIDATION_RUN / VALIDATION_RESULT）のチェックが含まれるか（§8.3）
+- [x] `DATAPUMP_FILE.STATUS='CONSUMED'` への遷移に `VERIFIED` が事前条件として設計されているか（§8.2 不変条件6・§8.3 CONSUME_DATAPUMP_FILE）
+- [x] `VERIFY_DATAPUMP_FILE` でチェックサム NULL 時に例外（-20005）を発生させる設計か（§8.3）
+- [x] `VALIDATION_RESULT` の FAIL 承認（`APPROVED_FLAG`）が PHASE2 完了判定に組み込まれているか（§8.3）
+- [x] 新規テーブル3本（ERROR_EVENT / VALIDATION_RUN / VALIDATION_RESULT）の制約名が全て30文字以内か（§6.11〜§6.13 DDL参照）
+- [x] ALTER TABLE での列追加・CHECK制約再作成が既存ファイル非修正の形で設計されているか（§2.5・§6.14）
+- [x] `PHASE_STATUS.APPROVAL_STATUS` の CHECK制約が NULL 許容になっているか（§6.14.4）
+- [x] `DATAPUMP_JOB.TABLE_EXISTS_ACTION` の CHECK制約が NULL 許容になっているか（§6.14.2）
+- [x] `VALIDATION_RUN.OVERALL_RESULT` の CHECK制約が NULL 許容になっているか（§6.12 DDL）
+- [x] v3.0 で「次段以降」から格上げされたテーブル（ERROR_EVENT 等）が §10 で明記されているか（§10）
