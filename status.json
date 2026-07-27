@@ -1,36 +1,36 @@
 {
   "domain": "学習",
-  "updated_at": "2026-07-27",
-  "headline": "Phase4段1（管理テーブル+API+E2E）完了。レビュー指摘を全修正しT01-T15全PASS。次は段2（LogMiner実行・解析結果登録）。",
-  "source": "git log, docs/progress.yml, docs/phase4-design.md",
+  "updated_at": "2026-07-28",
+  "headline": "Data Pump ボトルネック調査完了。QUERY句がdirect_pathを無効化する等の仕様事実を確認。次は二本立て方式（差分ダンプ+LogMiner）の設計書着手。",
+  "source": "git log, docs/datapump-performance-analysis.md, docs/handoff-guide.md",
   "items": [
     {
+      "title": "Data Pump ボトルネック調査（docs/datapump-performance-analysis.md）",
+      "status": "✅ 完了",
+      "summary": "PARALLEL/COMPRESSION=DATA_ONLYがXEで使用不可を実機確認。LOBあり表は行あたり6.3倍遅く、Export:Import:索引再構築=64%:33%:3%。QUERY句がdirect_pathを無効化する仕様事実も確認。計測スクリプト(74_benchmark_datapump.sh)を本番向けに整備済み。",
+      "next": "調査結果を踏まえ、二本立て方式（更新日時ベース差分ダンプ+LogMiner）の設計書を作成する",
+      "link": "docs/datapump-performance-analysis.md"
+    },
+    {
+      "title": "二本立て方式設計（次段: 未着手）",
+      "status": "📋 未着手",
+      "summary": "UPDATED_AT索引が全表ゼロのため差分抽出は全表フルスキャン確定。QUERY句を使うとdirect_pathが無効化される。これらを踏まえた設計書が必要。",
+      "next": "UPDATED_AT有り表は差分ダンプ方式・UPDATED_ATなし表はLogMiner方式の選択基準と実装方針を設計書に記述する",
+      "link": "docs/datapump-performance-analysis.md"
+    },
+    {
       "title": "Phase4段1: 管理テーブルDDL + PKG_MIG_ADMIN v5.0 + E2Eテスト",
-      "status": "✅ 完了（レビュー指摘修正済）",
-      "summary": "09_phase4_tables.sql（6テーブル）・10_pkg_mig_admin_phase4.sql（29本API）・72_test_phase4_tables_e2e.sh（T01-T15）を実装。quality-reviewerの指摘（API名統一・LOG_STATUS_CHANGE追加・T05/T13改善）を全修正し再テストPASS確認。",
+      "status": "✅ 完了",
+      "summary": "09_phase4_tables.sql（6テーブル）・10_pkg_mig_admin_phase4.sql（29本API）・72_test_phase4_tables_e2e.sh（T01-T15全PASS）。quality-reviewerの指摘も全修正済み。",
       "next": "Phase4段2（LogMiner実行スクリプト・解析結果登録）の設計・実装に着手する",
       "link": "scripts/72_test_phase4_tables_e2e.sh"
     },
     {
       "title": "Phase4 全体進捗（P4-01〜P4-26）",
       "status": "🟡 進行中（10/26完了）",
-      "summary": "P4-03/07/08/13/15/17/18/20/21/25が完了。P4-01（LogMiner PoC・期限2026-07-31）・P4-02/05/10/11/16が着手中。段2の実装で P4-01/02/05 を確認する予定。",
-      "next": "段2: DBMS_LOGMNR呼び出し・V$LOGMNR_CONTENTS取得・BULK_INS_MINED_TX/BULK_INS_MINED_CHGを使った登録スクリプトを実装する",
+      "summary": "段1完了（管理テーブル+API+E2E）。段2（LogMiner実行・解析結果登録）・段3（差分適用）が未実装。P4-01（LogMiner PoC・期限2026-07-31）が近い。",
+      "next": "段2: DBMS_LOGMNR呼び出し・V$LOGMNR_CONTENTS取得・BULK_INS系APIを使った登録スクリプトを実装する",
       "link": "docs/phase4-design.md"
-    },
-    {
-      "title": "Phase3 実行資材実装・E2Eテスト（完了済み）",
-      "status": "✅ 完了",
-      "summary": "oracle-tgt で LogMiner を起動し SRC_SCHEMA の INSERT/UPDATE/DELETE を実機解析。T01〜T08全件PASS。PKG_MIG_ADMIN v4.0（MIG_CHECKPOINT + 6本API）確立。",
-      "next": "完了済み。Phase4段2でUPSERT_CHECKPOINTをLogMiner文脈で使用する",
-      "link": "scripts/69_test_phase3_e2e.sh"
-    },
-    {
-      "title": "Phase1/2 実行資材・E2Eテスト（完了済み）",
-      "status": "✅ 完了",
-      "summary": "Data Pump Export/Import・ダンプファイル転送・バリデーションの全工程を実機確認。T01〜T16全件PASS。品質レビュー指摘（HIGH/MEDIUM）は全件修正済み。",
-      "next": "完了済み。Phase1/2の資材は変更不要",
-      "link": "scripts/66_test_phase1_2_e2e.sh"
     }
   ]
 }
