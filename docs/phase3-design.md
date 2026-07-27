@@ -475,6 +475,12 @@ oracle-src の XEPDB1（PDB）内で DBMS_LOGMNR_D.BUILD を実行した場合:
 | 7 | LogMiner で `ORA-01284: file /migfs/archivelogs/arch1_210_...dbf cannot be opened` が発生した | `ARCHIVE_LOG` テーブルには過去の複数回の辞書ビルド分が蓄積されており、`MIN(SEQUENCE_NO) WHERE DICTIONARY_BEGIN_FLAG='Y'` がセッション外の古い辞書 Seq（210）を返していた。Seq=210 のファイルは `/migfs` にコピーされておらず存在しない | `MAX(SEQUENCE_NO) WHERE DICTIONARY_BEGIN_FLAG='Y'` に変更して最新の辞書ビルド Seq を取得するよう修正した。また cp 失敗時はファイルリストに追加しない（`|| true` を排除してif分岐で制御）ようにした |
 | 8 | LogMiner で `SRC_SCHEMA.REGIONS` の INSERT/UPDATE/DELETE が検出されず（0件） | `INSERT INTO SRC_SCHEMA.REGIONS (REGION_ID, REGION_NAME) VALUES (9999, ...)` が `ORA-01400: cannot insert NULL into (REGION_CODE)` で失敗していた。`REGION_CODE` が NOT NULL 列だが INSERT に含めていなかった。エラーが `src_pdb_exec` の `/dev/null` リダイレクトで隠れていた | INSERT に `REGION_CODE => 'T07'` を追加した。また冪等性のため先頭で `DELETE FROM SRC_SCHEMA.REGIONS WHERE REGION_ID=9999` を追加した |
 
+| 9 | フレッシュ構築時のみ `08_views_phase3.sql` が `ORA-01031: insufficient privileges` で失敗。開発中の環境では成功していたため気づけなかった | `migration_ctl` に **`CREATE VIEW` 権限がなかった**。Oracle 12c 以降の `RESOURCE` ロールには `CREATE VIEW` が含まれない。開発時は手動で権限を足していたため通っており、`DROP USER` → 再作成の経路で初めて露見した | `01_migration_ctl_user.sql` に `GRANT CREATE VIEW TO migration_ctl;` を追加。**修正した 62 の「全DDL昇順適用＋エラーで即停止」がこれを検出した**（従来の 02・03 だけ適用する方式では 08 を流さないため永久に気づけなかった） |
+
+> **本番への示唆（権限）**: 「開発環境では動くが、作り直すと動かない」は権限付与を手作業で補ったときに必ず起きる。
+> 付与した権限は**必ずユーザー作成SQLに書き戻す**こと。`RESOURCE` ロールに何が含まれるかはバージョンで変わるため、
+> 必要な権限は個別 GRANT で明示するほうが安全。
+
 > **本番への示唆**: 「古いテストを回したら新しいスキーマが壊れる」構造は、環境を共有していると必ず事故になる。
 > しかも**テストは PASS するため気づけない**のが最も危険。DDL を積み増していく方式を採る場合、
 > 各テストの初期化処理は**常に最新の全DDLを適用する**か、そもそも破壊的初期化をしない設計にすること。

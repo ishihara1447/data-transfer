@@ -13,6 +13,10 @@ ALTER SESSION SET CONTAINER = XEPDB1;
 -- migration_ctl: 統合移行管理スキーマ
 CREATE USER migration_ctl IDENTIFIED BY &&MIGRATION_CTL_PASS;
 GRANT CONNECT, RESOURCE TO migration_ctl;
+-- CREATE VIEW は RESOURCE ロールに含まれないため個別に付与する。
+-- これがないと 08_views_phase3.sql の V_ARCHIVE_LOG_GAP 作成が
+-- ORA-01031 (insufficient privileges) で失敗する（フレッシュ構築時に必ず発生）。
+GRANT CREATE VIEW TO migration_ctl;
 ALTER USER migration_ctl QUOTA UNLIMITED ON USERS;
 
 -- 新設計では移行元(DB1.0)側に管理スキーマを持たない。DB1.0 は Data Pump ダンプと
