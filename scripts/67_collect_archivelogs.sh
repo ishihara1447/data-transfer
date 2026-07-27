@@ -239,12 +239,18 @@ END;
     if [[ -n "${COPY_ID}" ]]; then
         COPY_STATUS=$(mctl_sql "SELECT COPY_STATUS FROM ARCHIVE_LOG_COPY WHERE ARCHIVE_LOG_COPY_ID=${COPY_ID};")
         if [[ "${COPY_STATUS}" != "VERIFIED" ]]; then
-            mctl_sql_raw "
+            VERIFY_OUT=$(mctl_sql_raw "
 BEGIN
     PKG_MIG_ADMIN.VERIFY_ARCHIVE_LOG_COPY(p_copy_id=>${COPY_ID}, p_checksum=>'${CHECKSUM}');
     COMMIT;
+    DBMS_OUTPUT.PUT_LINE('VERIFY_DONE');
 END;
-/" > /dev/null 2>&1 || true
+/")
+            if ! echo "${VERIFY_OUT}" | grep -q 'VERIFY_DONE'; then
+                raise_error "VERIFY_ARCHIVE_LOG_COPY failed: COPY_ID=${COPY_ID} output=${VERIFY_OUT}"
+                ERROR_COUNT=$((ERROR_COUNT + 1))
+                continue
+            fi
         fi
         echo "    COPY_ID=${COPY_ID} -> VERIFIED"
     else
@@ -262,7 +268,7 @@ WHERE MIG_RUN_ID=${RUN_ID} AND COMPONENT_NAME='ARCHIVE_COLLECTOR'
     LAST_CP_SEQ="${LAST_CP_SEQ:-0}"
     EXPECTED_NEXT=$((LAST_CP_SEQ + 1))
 
-    if [[ "${SEQ_NO}" -le "${EXPECTED_NEXT}" ]]; then
+    if [[ "${SEQ_NO}" -eq "${EXPECTED_NEXT}" ]]; then
         mctl_sql_raw "
 BEGIN
     PKG_MIG_ADMIN.UPSERT_CHECKPOINT(

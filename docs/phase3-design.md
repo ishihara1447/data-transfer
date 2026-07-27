@@ -301,7 +301,6 @@ ARCHIVE_LOG_COPY へ `COPY_STATUS='RECEIVED'` で INSERT する。
 PROCEDURE REGISTER_ARCHIVE_LOG_COPY (
     p_archive_log_id IN  NUMBER,
     p_storage_loc    IN  VARCHAR2,
-    p_file_name      IN  VARCHAR2,
     p_file_path      IN  VARCHAR2,
     p_file_size      IN  NUMBER,
     p_checksum_algo  IN  VARCHAR2,

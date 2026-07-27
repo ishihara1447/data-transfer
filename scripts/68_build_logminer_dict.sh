@@ -229,7 +229,7 @@ WHERE MIG_RUN_ID=${RUN_ID} AND SOURCE_RESETLOGS_ID=${RESETLOGS_ID}
         # 注意: / は独立した行に置かないと sqlplus が PL/SQL ブロックを実行しない
         mctl_sql_raw "
 BEGIN
-    PKG_MIG_ADMIN.RECEIVE_ARCHIVE_LOG(${ARCHIVE_LOG_ID});
+    PKG_MIG_ADMIN.RECEIVE_ARCHIVE_LOG(p_archive_log_id => ${ARCHIVE_LOG_ID});
     COMMIT;
 END;
 /" > /dev/null 2>&1 || true
@@ -275,15 +275,20 @@ END;
         COPY_STATUS=$(mctl_sql "SELECT COPY_STATUS FROM ARCHIVE_LOG_COPY WHERE ARCHIVE_LOG_COPY_ID=${COPY_ID};")
         if [[ "${COPY_STATUS}" != "VERIFIED" ]]; then
             # 注意: / は独立した行に置かないと sqlplus が PL/SQL ブロックを実行しない
-            mctl_sql_raw "
+            VERIFY_OUT=$(mctl_sql_raw "
 BEGIN
     PKG_MIG_ADMIN.VERIFY_ARCHIVE_LOG_COPY(
         p_copy_id  => ${COPY_ID},
         p_checksum => '${CHECKSUM}'
     );
     COMMIT;
+    DBMS_OUTPUT.PUT_LINE('VERIFY_DONE');
 END;
-/" > /dev/null 2>&1 || true
+/")
+            if ! echo "${VERIFY_OUT}" | grep -q 'VERIFY_DONE'; then
+                raise_error "VERIFY_ARCHIVE_LOG_COPY failed: COPY_ID=${COPY_ID} output=${VERIFY_OUT}"
+                continue
+            fi
         fi
     fi
 

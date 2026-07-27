@@ -1,35 +1,35 @@
 {
   "domain": "学習",
   "updated_at": "2026-07-27",
-  "headline": "Phase1/2 完了フェーズ。E2E T01〜T16実機PASS・品質レビュー指摘（HIGH1件/MEDIUM5件）修正済み・成果物一覧を実態更新（23/25完了）。次はPhase3（差分アーカイブ収集）設計。",
-  "source": "git log, docs/phase1-2-deliverables-and-flow.md, scripts/66_test_phase1_2_e2e.sh",
+  "headline": "Phase3実行資材を実装・E2E全件PASS（T01〜T08）。移行先LogMinerでINSERT/UPDATE/DELETEを実機解析確認。完了率38.7%（29/75件）。次はPhase4（差分反映）へ。",
+  "source": "git log, docs/progress.yml, scripts/69_test_phase3_e2e.sh",
   "items": [
     {
-      "title": "Phase1/2 品質レビュー修正・成果物一覧更新",
+      "title": "Phase3 実行資材実装・E2Eテスト PASS",
       "status": "✅ 完了",
-      "summary": "品質レビューで指摘されたHIGH1件（include/exclude競合→ORA-39120）・MEDIUM5件（DIRECTORY権限クエリ誤・DBA_ビュー未使用・cleanup_for_retry不完全・DATAPUMP_JOB条件分岐欠如・COMPLETE_PHASE非ゼロ終了未検出）を全修正。docs/phase1-2-deliverables-and-flow.md の状態欄を実態（23点完了・2点未着手）に更新。",
-      "next": "Phase3（差分アーカイブ収集）の実行資材設計に着手する",
-      "link": "docs/phase1-2-deliverables-and-flow.md"
+      "summary": "sql/phase3/（5本）・scripts/67〜69（3本）・08_views_phase3.sql を新設。T01〜T08全件PASS。T07では oracle-tgt で LogMiner を起動し SRC_SCHEMA の INSERT/UPDATE/DELETE を実機解析。T04でPDB内辞書ビルドのマーカーなし罠を回帰テストで確認。",
+      "next": "quality-reviewer のレビュー指摘があれば反映し、Phase4（差分反映）の設計・実装に着手する",
+      "link": "scripts/69_test_phase3_e2e.sh"
     },
     {
-      "title": "Phase1/2 E2Eテスト（66_test_phase1_2_e2e.sh）",
+      "title": "migration_ctl スキーマ v4.0（MIG_CHECKPOINT + PKG_MIG_ADMIN 24本）",
       "status": "✅ 完了",
-      "summary": "T01〜T16全件PASS。GRP02意図的失敗→ERROR_EVENT記録→RETRY→部分再実行で回復。COMPLETE_PHASE機械判定（条件未達時拒否・全条件充足でCOMPLETED）・件数突合（327,275行、AS OF SCN）を実機確認済み。",
-      "next": "完了済み。品質レビューで修正したpar/shの回帰をE2Eが担保している",
+      "summary": "MIG_CHECKPOINTテーブル・REGISTER_ARCHIVE_LOG/RECEIVE/REGISTER_COPY/SET_DICT_MARKERS/UPSERT_CHECKPOINT/COMPLETE_PHASE3 の6本を追加。COMPLETE_PHASE3のNULL RECORD_IDバグも修正済み。",
+      "next": "完了済み。Phase4用 API が追加で必要になれば 09_pkg_mig_admin_phase4.sql として追加する",
+      "link": "sql/migration_ctl/07_pkg_mig_admin_phase3.sql"
+    },
+    {
+      "title": "Phase1/2 E2Eテスト・品質レビュー修正",
+      "status": "✅ 完了",
+      "summary": "T01〜T16全件PASS。GRP02意図的失敗→回復サイクル・件数突合・COMPLETE_PHASE機械判定を実機確認。品質レビュー指摘（HIGH/MEDIUM）は全件修正済み。",
+      "next": "完了済み。Phase1/2の資材は変更不要",
       "link": "scripts/66_test_phase1_2_e2e.sh"
     },
     {
-      "title": "migration_ctl スキーマ v3.0（12テーブル + PKG_MIG_ADMIN 18本）",
-      "status": "✅ 完了",
-      "summary": "ERROR_EVENT / VALIDATION_RUN / VALIDATION_RESULT 追加・COMPLETE_PHASE機械判定（PHASE1/2 各6条件）実装。既存4テーブルへの列追加も完了。sql/migration_ctl/04〜05 として適用済み。",
-      "next": "フェーズ3用テーブル（LOGMINER_BATCH等）の先行追加要否を判断する",
-      "link": "sql/migration_ctl/05_pkg_mig_admin_phase1_2.sql"
-    },
-    {
-      "title": "フェーズ3実行資材（差分アーカイブ収集・LogMiner連携）",
+      "title": "Phase4（Archived Redo解析・差分反映）",
       "status": "❌ 未着手",
-      "summary": "フェーズ4（差分反映）に向けてアーカイブログ収集・LogMiner解析の実行資材が必要。MIG_CHECKPOINTテーブルの先行追加判断も含む。",
-      "next": "フェーズ3の実行資材一覧を docs/phase3-deliverables.md として定義し、oracle-researcher にLogMiner挙動を確認させてから設計に着手する",
+      "summary": "oracle-tgt での LogMiner 解析結果（V$LOGMNR_CONTENTS）を STAGING_SCHEMA へ適用する実行資材が必要。Phase3 の PoC でアーキテクチャ（DICT_FROM_REDO_LOGS + SEG_OWNER フィルタ）は実証済み。",
+      "next": "docs/progress.yml の P4 項目を確認し、設計ドキュメント（phase4-design.md）の作成から着手する",
       "link": "docs/gap-analysis-5phase-schema.md"
     }
   ]
