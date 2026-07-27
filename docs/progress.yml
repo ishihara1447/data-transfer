@@ -1,0 +1,917 @@
+meta:
+  source: 設計メモ「Oracleデータ移行 調査・検討・検証・設計事項一覧（5フェーズ・移行管理テーブル連携反映版）」§3.3/§4.3/§5.3/§6.3/§7.3
+  status_values:
+    done: ✅ 完了（evidence に確認方法を必ず書く）
+    in_progress: 🟡 着手・部分的
+    todo: ❌ 未着手
+    blocked_env: 🔴 本検証環境では実施不可（本番相当環境が必要）
+  note: このファイルが進捗の唯一の正。docs/master-checklist.md は scripts/70_progress_report.sh で自動生成される。手で md を編集しないこと。
+items:
+- id: P1-01
+  phase: P1
+  priority: A
+  kind: 設計・確認
+  title: 移行元PDB・スキーマの確定
+  deliverables:
+  - 移行元接続定義
+  - 実行環境情報
+  status: in_progress
+  note: TMP-10 で仮決定（oracle-src/XEPDB1/SRC_SCHEMA）
+  evidence: ''
+  updated: '2026-07-27'
+- id: P1-02
+  phase: P1
+  priority: A
+  kind: 調査・設計
+  title: 移行対象テーブル一覧の正式化
+  deliverables:
+  - 移行対象テーブル一覧
+  - 対象外一覧
+  - 1.0スキーマ作成対象一覧
+  status: in_progress
+  note: TMP-10 で仮決定（3表）。本番500表の正式化は未
+  evidence: ''
+  updated: '2026-07-27'
+- id: P1-03
+  phase: P1
+  priority: A
+  kind: 調査
+  title: 特殊データ型の棚卸し
+  deliverables:
+  - 特殊データ型一覧
+  - 対象件数・容量一覧
+  - Export可否一覧
+  status: todo
+  note: 特殊型の棚卸し未実施。検証環境は基本型＋LOBのみ
+  evidence: ''
+  updated: '2026-07-27'
+- id: P1-04
+  phase: P1
+  priority: A
+  kind: 設計・先行準備
+  title: 基準SCN・解析開始SCNの決定、取得、登録
+  deliverables:
+  - SCN境界設計
+  - 基準SCN・解析開始SCN取得手順
+  - 最小管理テーブル定義
+  - SCN登録SQL
+  status: in_progress
+  note: 管理テーブル定義とSCN登録SQLは実装済（MIGRATION_RUN/FIX_BASELINE_SCN）。取得手順は整備中
+  evidence: ''
+  updated: '2026-07-27'
+- id: P1-05
+  phase: P1
+  priority: A
+  kind: 設計
+  title: Export内容の決定
+  deliverables:
+  - Export対象・内容方針
+  - Exportパラメータ定義
+  status: in_progress
+  note: フェーズ1資材として整備中
+  evidence: ''
+  updated: '2026-07-27'
+- id: P1-06
+  phase: P1
+  priority: A
+  kind: 検討・設計
+  title: Data Pump取得単位・ジョブ分割
+  deliverables:
+  - Data Pumpジョブ分割一覧
+  - 対象テーブル・ジョブ対応表
+  - 実行順序表
+  status: in_progress
+  note: TMP-06 で2ジョブに仮決定。本番の分割設計は未
+  evidence: ''
+  updated: '2026-07-27'
+- id: P1-07
+  phase: P1
+  priority: A
+  kind: 調査・PoC・設計
+  title: UNDO容量・ORA-01555対策
+  deliverables:
+  - UNDO容量試算
+  - ORA-01555試験結果
+  - 対策方針
+  status: todo
+  note: UNDO容量試算・ORA-01555試験は未実施（UNV-02）
+  evidence: ''
+  updated: '2026-07-27'
+- id: P1-08
+  phase: P1
+  priority: A
+  kind: 設計・環境準備
+  title: Migrationファイルサーバ上の保存先・DIRECTORY設計
+  deliverables:
+  - ファイル配置設計
+  - DIRECTORY作成SQL
+  - 権限設定手順
+  status: in_progress
+  note: TMP-07 で /migfs 共有ボリュームに仮決定。整備中
+  evidence: ''
+  updated: '2026-07-27'
+- id: P1-09
+  phase: P1
+  priority: B
+  kind: 設計
+  title: ダンプファイル命名・分割・保持方針
+  deliverables:
+  - ファイル命名規則
+  - ファイル分割方針
+  - 保管・削除方針
+  status: todo
+  note: 命名・分割・保持方針は未策定
+  evidence: ''
+  updated: '2026-07-27'
+- id: P1-10
+  phase: P1
+  priority: B
+  kind: PoC・試算
+  title: Data Pumpダンプ容量の試算
+  deliverables:
+  - ダンプ容量実測結果
+  - Migrationファイルサーバ容量試算
+  status: blocked_env
+  note: 容量実測は本環境では取得不可（UNV-02）
+  evidence: ''
+  updated: '2026-07-27'
+- id: P1-11
+  phase: P1
+  priority: B
+  kind: PoC・設計
+  title: 並列度・DB1.0業務影響・書込み性能
+  deliverables:
+  - 推奨並列度
+  - 性能測定結果
+  - 業務影響評価
+  status: blocked_env
+  note: 並列度・業務影響の実測は本環境では取得不可（UNV-02）
+  evidence: ''
+  updated: '2026-07-27'
+- id: P1-12
+  phase: P1
+  priority: B
+  kind: 設計・PoC
+  title: 圧縮・暗号化・ファイル完全性
+  deliverables:
+  - 圧縮・暗号化方針
+  - ファイル完全性確認手順
+  status: in_progress
+  note: チェックサム（完全性）は整備中。圧縮・暗号化は未
+  evidence: ''
+  updated: '2026-07-27'
+- id: P1-13
+  phase: P1
+  priority: A
+  kind: 設計・環境準備
+  title: Export実行ユーザー・必要権限
+  deliverables:
+  - 権限一覧
+  - ユーザー作成・権限付与SQL
+  - 認証運用手順
+  status: in_progress
+  note: Export実行ユーザー・権限は整備中
+  evidence: ''
+  updated: '2026-07-27'
+- id: P1-14
+  phase: P1
+  priority: A
+  kind: 設計・PoC
+  title: Export監視・異常終了・再開・再実行
+  deliverables:
+  - Export監視手順
+  - 異常終了時の復旧手順
+  - 再実行判断表
+  status: in_progress
+  note: 監視・再実行はフェーズ1資材として整備中
+  evidence: ''
+  updated: '2026-07-27'
+- id: P1-15
+  phase: P1
+  priority: A
+  kind: 設計
+  title: Export完了判定
+  deliverables:
+  - Export完了チェックリスト
+  - 実行結果記録
+  status: in_progress
+  note: 完了判定は COMPLETE_PHASE として整備中
+  evidence: ''
+  updated: '2026-07-27'
+- id: P1-16
+  phase: P1
+  priority: A
+  kind: PoC・設計
+  title: BLOB／CLOB全量Export検証
+  deliverables:
+  - LOB全量Export試験結果
+  - LOBジョブ分割方針
+  status: todo
+  note: LOB全量Export試験は未実施
+  evidence: ''
+  updated: '2026-07-27'
+- id: P2-01
+  phase: P2
+  priority: A
+  kind: 設計・環境準備
+  title: 投入先PDB・1.0スキーマの確定
+  deliverables:
+  - 投入先接続定義
+  - Import実行環境情報
+  status: in_progress
+  note: TMP-10 で仮決定（oracle-tgt/XEPDB1/STAGING_SCHEMA）
+  evidence: ''
+  updated: '2026-07-27'
+- id: P2-02
+  phase: P2
+  priority: A
+  kind: 設計・環境準備
+  title: 1.0スキーマユーザー・表領域・QUOTA
+  deliverables:
+  - 1.0スキーマ構築手順
+  - ユーザー・権限設定SQL
+  status: in_progress
+  note: 既存 staging スキーマあり。表領域・QUOTA設計は要見直し
+  evidence: ''
+  updated: '2026-07-27'
+- id: P2-03
+  phase: P2
+  priority: A
+  kind: 設計
+  title: スキーマ対応・REMAP_SCHEMA
+  deliverables:
+  - スキーマ対応表
+  - Importパラメータ
+  status: in_progress
+  note: REMAP_SCHEMA はプロトタイプにあり。正式資材は整備中
+  evidence: ''
+  updated: '2026-07-27'
+- id: P2-04
+  phase: P2
+  priority: A
+  kind: 設計・PoC
+  title: 表領域対応・物理属性の扱い
+  deliverables:
+  - 表領域対応表
+  - 物理属性取込み方針
+  status: todo
+  note: 表領域対応・物理属性の方針は未策定
+  evidence: ''
+  updated: '2026-07-27'
+- id: P2-05
+  phase: P2
+  priority: A
+  kind: 設計・PoC
+  title: DDLとデータの取込み方式
+  deliverables:
+  - Import方式設計
+  - DDL適用方針
+  status: in_progress
+  note: TMP-09 で仮決定（索引・制約は取込み後再構築）
+  evidence: ''
+  updated: '2026-07-27'
+- id: P2-06
+  phase: P2
+  priority: A
+  kind: 設計・検証
+  title: SQLFILEによるDDL事前レビュー
+  deliverables:
+  - DDLプレビューSQL
+  - DDLレビュー結果
+  - 修正・除外一覧
+  status: in_progress
+  note: SQLFILE レビューと承認記録は整備中
+  evidence: ''
+  updated: '2026-07-27'
+- id: P2-07
+  phase: P2
+  priority: A
+  kind: 設計
+  title: オブジェクト種別ごとの取込み・除外
+  deliverables:
+  - オブジェクト種別別取込み・除外一覧
+  - INCLUDE／EXCLUDE設計
+  status: in_progress
+  note: TMP-09 の一部。業務トリガー/ジョブ除外はメモ §12.1 で確定
+  evidence: ''
+  updated: '2026-07-27'
+- id: P2-08
+  phase: P2
+  priority: A
+  kind: 調査・設計
+  title: 外部キー・親子関係・登録順序
+  deliverables:
+  - テーブル依存関係図
+  - 制約適用順序一覧
+  status: todo
+  note: 外部キー・親子関係・登録順序は未整理（検証環境は3表のみ）
+  evidence: ''
+  updated: '2026-07-27'
+- id: P2-09
+  phase: P2
+  priority: A
+  kind: 設計・PoC
+  title: 既存テーブルの扱い・TABLE_EXISTS_ACTION
+  deliverables:
+  - 既存テーブル処理方針
+  - 再Import初期化手順
+  status: in_progress
+  note: 再Import初期化は整備中
+  evidence: ''
+  updated: '2026-07-27'
+- id: P2-10
+  phase: P2
+  priority: B
+  kind: PoC・設計
+  title: Import並列度・処理時間
+  deliverables:
+  - 推奨Import並列度
+  - 性能測定結果
+  status: blocked_env
+  note: Import並列度・処理時間の実測は本環境では取得不可（UNV-02）
+  evidence: ''
+  updated: '2026-07-27'
+- id: P2-11
+  phase: P2
+  priority: A
+  kind: PoC・設計
+  title: BLOB／CLOB全量Import検証
+  deliverables:
+  - LOB全量Import試験結果
+  - LOB検証SQL
+  status: todo
+  note: LOB全量Import試験は未実施
+  evidence: ''
+  updated: '2026-07-27'
+- id: P2-12
+  phase: P2
+  priority: B
+  kind: 調査・設計・PoC
+  title: その他特殊型のImport方式
+  deliverables:
+  - 特殊型別Import方針
+  - 試験結果
+  status: todo
+  note: 特殊型のImport方式は未検討
+  evidence: ''
+  updated: '2026-07-27'
+- id: P2-13
+  phase: P2
+  priority: A
+  kind: 設計・PoC
+  title: Import監視・異常終了・再実行
+  deliverables:
+  - Import監視手順
+  - エラー復旧手順
+  - 再実行手順
+  - 初期化SQL
+  status: in_progress
+  note: 監視・再実行・初期化は整備中
+  evidence: ''
+  updated: '2026-07-27'
+- id: P2-14
+  phase: P2
+  priority: A
+  kind: 設計・実施
+  title: 全量移行後のデータ検証
+  deliverables:
+  - 全量移行検証仕様書
+  - 検証SQL
+  - 検証結果
+  status: in_progress
+  note: VALIDATION_RUN/RESULT として整備中。旧方式の 49_two_stage_verify.sh が流用可
+  evidence: ''
+  updated: '2026-07-27'
+- id: P2-15
+  phase: P2
+  priority: A
+  kind: 設計
+  title: フェーズ2の合格基準・承認
+  deliverables:
+  - フェーズ2完了判定基準
+  - 承認記録
+  status: in_progress
+  note: COMPLETE_PHASE による合格判定を整備中。承認記録は APPROVAL_STATUS
+  evidence: ''
+  updated: '2026-07-27'
+- id: P2-16
+  phase: P2
+  priority: B
+  kind: 試算
+  title: DB2.0必要容量の初期試算
+  deliverables:
+  - DB2.0容量計画
+  status: blocked_env
+  note: DB2.0 容量試算は本環境では取得不可（UNV-02）
+  evidence: ''
+  updated: '2026-07-27'
+- id: P3-01
+  phase: P3
+  priority: A
+  kind: 確認・設計・先行準備
+  title: ARCHIVELOG設定・出力先・収集開始条件
+  deliverables:
+  - Archived Redo出力設定確認結果
+  - 収集開始記録
+  - 保持・再取得設計
+  status: in_progress
+  note: ARCHIVELOG稼働は確認済。収集開始記録・保持設計は未（管理台帳未連携）
+  evidence: ''
+  updated: '2026-07-27'
+- id: P3-02
+  phase: P3
+  priority: A
+  kind: 調査・設定・PoC・先行準備
+  title: Supplemental Logging設定
+  deliverables:
+  - 現行設定確認結果
+  - 設定変更手順
+  - 検証結果
+  status: done
+  note: ''
+  evidence: sql/cdc/14_supplemental_logging.sql でデプロイ・設定確認（2026-07-26以前）
+  updated: '2026-07-27'
+- id: P3-03
+  phase: P3
+  priority: A
+  kind: 設計・サンプル作成・先行準備
+  title: LogMiner Dictionary生成・保管
+  deliverables:
+  - Dictionary生成・読込み手順
+  - サンプルSQL
+  - 対象ログ一覧
+  status: done
+  note: ''
+  evidence: 移行先LogMiner PoC（コミット 6aeb1ab / 2026-07-26）。CDB$ROOT で STORE_IN_REDO_LOGS を実行し V$ARCHIVED_LOG の DICTIONARY_BEGIN/END マーカーを確認
+  updated: '2026-07-27'
+- id: P3-04
+  phase: P3
+  priority: A
+  kind: 設計
+  title: Archived Redo欠落検知・再取得
+  deliverables:
+  - 欠落検知仕様
+  - 復旧手順
+  status: done
+  note: ''
+  evidence: scripts/48_test_archive_gap.sh E2E PASS（コミット c24616d）
+  updated: '2026-07-27'
+- id: P3-05
+  phase: P3
+  priority: B
+  kind: 設計
+  title: ファイル破損・書込み途中・重複の防止
+  deliverables:
+  - Archived Redo受入判定仕様
+  status: todo
+  note: 破損・書込み途中・重複の受入判定仕様は未策定
+  evidence: ''
+  updated: '2026-07-27'
+- id: P3-06
+  phase: P3
+  priority: A
+  kind: 調査
+  title: 1日当たり・時間帯別Redo量
+  deliverables:
+  - 日次・時間帯別Redo量
+  - ファイルサーバ容量見積り
+  status: in_progress
+  note: docs/archive-measurement-findings.md に検証環境での測定あり。本番量は未（UNV-02）
+  evidence: ''
+  updated: '2026-07-27'
+- id: P3-07
+  phase: P3
+  priority: A
+  kind: 設計・リハーサル
+  title: 最終Archived Redoの確定
+  deliverables:
+  - 最終ログ確定手順
+  - 最終到達確認方法
+  status: todo
+  note: 最終ログ確定手順は未策定（SET_TARGET_END_SCN API のみ実装）
+  evidence: ''
+  updated: '2026-07-27'
+- id: P4-01
+  phase: P4
+  priority: A
+  kind: PoC
+  title: DB1.0 Archived RedoをDB2.0で解析するPoC
+  deliverables:
+  - PoC結果報告
+  - 実行SQL
+  - 制約・課題一覧
+  status: in_progress
+  note: PoC 実施済だが1表1UPDATE規模（UNV-06）。本格検証は未
+  evidence: ''
+  updated: '2026-07-27'
+- id: P4-02
+  phase: P4
+  priority: B
+  kind: 設計
+  title: LogMiner実行構成
+  deliverables:
+  - LogMiner実行構成図
+  - 権限設計
+  status: in_progress
+  note: 実行構成はPoCで確認。権限設計は未整理
+  evidence: ''
+  updated: '2026-07-27'
+- id: P4-03
+  phase: P4
+  priority: A
+  kind: 設計・実装
+  title: 移行管理スキーマのテーブル構成
+  deliverables:
+  - 管理スキーマDDL
+  - ER図
+  - 状態遷移表
+  - 管理API
+  - フェーズ別登録・更新SQL
+  status: in_progress
+  note: 先行準備Aの9テーブル＋API実装済。フェーズ4・5用テーブルは未
+  evidence: ''
+  updated: '2026-07-27'
+- id: P4-04
+  phase: P4
+  priority: A
+  kind: 設計・PoC
+  title: LogMiner処理単位
+  deliverables:
+  - LogMinerバッチ分割設計
+  - 性能測定結果
+  status: todo
+  note: LogMinerバッチ分割設計は未（LOGMINER_BATCH 未実装）
+  evidence: ''
+  updated: '2026-07-27'
+- id: P4-05
+  phase: P4
+  priority: A
+  kind: PoC・設計
+  title: コミット済みトランザクションだけの抽出
+  deliverables:
+  - オプション採用結果
+  - 制約事項
+  status: in_progress
+  note: PoC では COMMITTED_DATA_ONLY 使用。旧方式は未使用（既存ギャップ G3）
+  evidence: ''
+  updated: '2026-07-27'
+- id: P4-06
+  phase: P4
+  priority: A
+  kind: 調査
+  title: 最大トランザクションの調査
+  deliverables:
+  - 最大トランザクション調査結果
+  status: todo
+  note: 最大トランザクション調査は未実施
+  evidence: ''
+  updated: '2026-07-27'
+- id: P4-07
+  phase: P4
+  priority: A
+  kind: 設計
+  title: 対象テーブル抽出方法
+  deliverables:
+  - 対象抽出SQL
+  - 対象テーブル管理仕様
+  status: done
+  note: ''
+  evidence: 移行先LogMiner PoC（6aeb1ab）で SEG_OWNER 抽出を確認。CON_ID フィルタが使えない知見を gap-analysis §1.2 に記録
+  updated: '2026-07-27'
+- id: P4-08
+  phase: P4
+  priority: B
+  kind: 設計
+  title: LogMiner解析結果の保存項目
+  deliverables:
+  - 解析結果テーブル定義
+  - 索引設計
+  status: in_progress
+  note: 旧方式の delta_queue はあり。新設計の MINED_TRANSACTION/CHANGE は未
+  evidence: ''
+  updated: '2026-07-27'
+- id: P4-09
+  phase: P4
+  priority: A
+  kind: 設計・PoC
+  title: CSFによるSQL_REDO連結
+  deliverables:
+  - SQL_REDO連結ロジック
+  - テスト結果
+  status: todo
+  note: CSF による SQL_REDO 連結は未実装
+  evidence: ''
+  updated: '2026-07-27'
+- id: P4-10
+  phase: P4
+  priority: A
+  kind: PoC・設計
+  title: ROWIDを使わず主キーで行特定
+  deliverables:
+  - 行特定方式
+  - PoC結果
+  status: in_progress
+  note: 旧方式は replay_category 分類＋手動調査キューで回避。主キー特定方式は未確立
+  evidence: ''
+  updated: '2026-07-27'
+- id: P4-11
+  phase: P4
+  priority: A
+  kind: 設計・検証
+  title: トランザクション内の適用順序
+  deliverables:
+  - 適用順序仕様
+  - テストケース
+  status: in_progress
+  note: 旧方式は COMMIT_SCN 順で適用。新設計の適用順序仕様は未
+  evidence: ''
+  updated: '2026-07-27'
+- id: P4-12
+  phase: P4
+  priority: A
+  kind: 調査・設計
+  title: 外部キー・親子関係・DML順序
+  deliverables:
+  - 登録・更新・削除順序一覧
+  status: todo
+  note: 外部キー考慮のDML順序は未整理
+  evidence: ''
+  updated: '2026-07-27'
+- id: P4-13
+  phase: P4
+  priority: A
+  kind: 設計
+  title: INSERT・UPDATE・DELETE反映方式
+  deliverables:
+  - DML適用共通仕様
+  status: done
+  note: ''
+  evidence: scripts/42_test_delete_e2e.sh / 31_test_integrated_e2e.sh E2E PASS
+  updated: '2026-07-27'
+- id: P4-14
+  phase: P4
+  priority: B
+  kind: 設計・PoC
+  title: MERGEと直接DMLの使い分け
+  deliverables:
+  - DML使い分け基準
+  - 性能比較結果
+  status: todo
+  note: MERGE と直接DMLの使い分け基準は未策定
+  evidence: ''
+  updated: '2026-07-27'
+- id: P4-15
+  phase: P4
+  priority: A
+  kind: 設計
+  title: 冪等性・再実行
+  deliverables:
+  - 再実行制御仕様
+  status: done
+  note: ''
+  evidence: scripts/12_test_fault_restart.sh E2E PASS（apply_ledger による冪等性）
+  updated: '2026-07-27'
+- id: P4-16
+  phase: P4
+  priority: B
+  kind: 設計
+  title: UPDATE／DELETE件数異常
+  deliverables:
+  - 異常判定・エラー処理仕様
+  status: in_progress
+  note: 件数異常は手動調査キューへ退避。異常判定仕様は未形式化
+  evidence: ''
+  updated: '2026-07-27'
+- id: P4-17
+  phase: P4
+  priority: A
+  kind: 設計・PoC
+  title: BLOB差分方式
+  deliverables:
+  - BLOB差分移行設計
+  - LOB再取得手順
+  - 整合性方針
+  - PoC結果
+  status: done
+  note: ''
+  evidence: scripts/44_test_lob_resync_e2e.sh E2E PASS（コミット 5126c55）
+  updated: '2026-07-27'
+- id: P4-18
+  phase: P4
+  priority: A
+  kind: 調査・設計・PoC
+  title: CLOB差分方式
+  deliverables:
+  - CLOB差分対応方針
+  - PoC結果
+  status: done
+  note: ''
+  evidence: 同上（scripts/44_test_lob_resync_e2e.sh、CLOB を含む）
+  updated: '2026-07-27'
+- id: P4-19
+  phase: P4
+  priority: B
+  kind: 調査・設計
+  title: その他特殊型の差分方式
+  deliverables:
+  - 特殊型別差分反映方針
+  status: todo
+  note: その他特殊型の差分方式は未検討
+  evidence: ''
+  updated: '2026-07-27'
+- id: P4-20
+  phase: P4
+  priority: A
+  kind: 設計
+  title: チェックポイント設計
+  deliverables:
+  - チェックポイントテーブル・更新仕様
+  status: in_progress
+  note: 旧方式の delta_apply_state はあり。MIG_CHECKPOINT は未（TMP-03）
+  evidence: ''
+  updated: '2026-07-27'
+- id: P4-21
+  phase: P4
+  priority: A
+  kind: 設計
+  title: エラー管理・再処理
+  deliverables:
+  - エラー管理仕様
+  - 再処理手順
+  status: in_progress
+  note: 旧方式は delta_manual_review_queue。ERROR_EVENT は整備中
+  evidence: ''
+  updated: '2026-07-27'
+- id: P4-22
+  phase: P4
+  priority: C
+  kind: 設計
+  title: LogMiner解析結果の保持期間
+  deliverables:
+  - データ保持・削除方針
+  status: todo
+  note: 保持期間・削除方針は未策定（旧方式のパージ実装は別物）
+  evidence: ''
+  updated: '2026-07-27'
+- id: P4-23
+  phase: P4
+  priority: A
+  kind: PoC
+  title: 全体処理速度・追付き性能
+  deliverables:
+  - 処理能力比較
+  - 追付き可否判定
+  status: blocked_env
+  note: 追付き性能は本環境では評価不可（UNV-02）
+  evidence: ''
+  updated: '2026-07-27'
+- id: P4-24
+  phase: P4
+  priority: B
+  kind: PoC・設計
+  title: DB2.0リソース競合
+  deliverables:
+  - 同時実行方針
+  - 推奨並列度
+  status: blocked_env
+  note: DB2.0 リソース競合は本環境では評価不可
+  evidence: ''
+  updated: '2026-07-27'
+- id: P4-25
+  phase: P4
+  priority: A
+  kind: 設計・実施
+  title: DB1.0とDB2.0側1.0スキーマの一致確認
+  deliverables:
+  - 比較SQL
+  - 検証結果
+  status: done
+  note: ''
+  evidence: scripts/53_test_two_stage_verify.sh E2E PASS（コミット 71d5f44）
+  updated: '2026-07-27'
+- id: P4-26
+  phase: P4
+  priority: A
+  kind: 設計
+  title: フェーズ4の合格基準
+  deliverables:
+  - フェーズ4完了判定基準
+  status: todo
+  note: フェーズ4の合格基準は未形式化
+  evidence: ''
+  updated: '2026-07-27'
+- id: P5-01
+  phase: P5
+  priority: B
+  kind: 設計確認
+  title: 変換処理の実行・再処理単位
+  deliverables:
+  - 変換処理単位一覧
+  status: done
+  note: ''
+  evidence: scripts/20_test_phase2_transform.sh E2E PASS（transform_catalog による変換単位管理）
+  updated: '2026-07-27'
+- id: P5-02
+  phase: P5
+  priority: B
+  kind: 設計
+  title: 旧キーと新キーの対応管理
+  deliverables:
+  - キーマッピングテーブル設計
+  status: in_progress
+  note: code_mapping はステータス変換のみ。汎用 KEY_MAPPING は未
+  evidence: ''
+  updated: '2026-07-27'
+- id: P5-03
+  phase: P5
+  priority: B
+  kind: 設計・検証
+  title: 変換処理の決定性・再現性
+  deliverables:
+  - 再現性確認結果
+  status: done
+  note: ''
+  evidence: scripts/21_test_phase2_mechanism.sh E2E PASS（冪等な再変換）
+  updated: '2026-07-27'
+- id: P5-04
+  phase: P5
+  priority: B
+  kind: 調査・設計・検証
+  title: 特殊型の2.0変換方式
+  deliverables:
+  - 特殊型別2.0変換方針
+  status: in_progress
+  note: LOBパススルーは実装済（54_test）。その他特殊型は未
+  evidence: ''
+  updated: '2026-07-27'
+- id: P5-05
+  phase: P5
+  priority: A
+  kind: 設計
+  title: チェックポイント・エラー・再処理
+  deliverables:
+  - 2.0変換チェックポイント仕様
+  - 再処理手順
+  status: in_progress
+  note: transform_state による再開点管理あり。エラー・再処理仕様は部分的
+  evidence: ''
+  updated: '2026-07-27'
+- id: P5-06
+  phase: P5
+  priority: A
+  kind: 設計・実施
+  title: 1.0スキーマと2.0スキーマの整合確認
+  deliverables:
+  - 変換検証仕様
+  - 検証結果
+  status: done
+  note: ''
+  evidence: scripts/53_test_two_stage_verify.sh / 54_test_lob_passthrough_e2e.sh E2E PASS
+  updated: '2026-07-27'
+- id: P5-07
+  phase: P5
+  priority: A
+  kind: 設計
+  title: フェーズ5の合格基準
+  deliverables:
+  - フェーズ5完了・移行判定基準
+  status: todo
+  note: フェーズ5の合格基準は未形式化
+  evidence: ''
+  updated: '2026-07-27'
+- id: P5-08
+  phase: P5
+  priority: A
+  kind: 設計
+  title: 最終切替工程
+  deliverables:
+  - 最終切替タイムチャート
+  status: todo
+  note: 最終切替タイムチャートは未作成
+  evidence: ''
+  updated: '2026-07-27'
+- id: P5-09
+  phase: P5
+  priority: A
+  kind: 検証
+  title: 事前リハーサル
+  deliverables:
+  - リハーサル結果
+  - 所要時間
+  - 改善事項
+  status: todo
+  note: 事前リハーサルは未実施
+  evidence: ''
+  updated: '2026-07-27'
+- id: P5-10
+  phase: P5
+  priority: A
+  kind: 設計
+  title: ロールバック方針
+  deliverables:
+  - ロールバック手順
+  - 判断基準
+  status: todo
+  note: ロールバック方針・判断基準は未策定
+  evidence: ''
+  updated: '2026-07-27'
