@@ -1266,6 +1266,11 @@ PROCEDURE UPDATE_MINED_CHG_STATUS (
 
 `LAST_APPLIED_SCN` の更新は必ず `MIG_CHECKPOINT` と整合する値とし、単独で先行更新しない（設計メモ §6.2.6）。
 
+> **段1 E2E テスト（T13）について**: 段1 の API は各々が内部で `COMMIT` を発行するため、
+> `COMPLETE_APPLY_TASK` と `UPSERT_CHECKPOINT` を同一 PL/SQL ブロックで呼んでも
+> 2つの独立したトランザクションになる。真の不変条件の実現は段3 APPLY_WRITER の実装で行う。
+> T13 は「2操作が各々正常動作し、ROLLBACK で各々が巻き戻ること」の確認にとどまる。
+
 ---
 
 ## 10. 段2以降の設計見通し

@@ -440,6 +440,23 @@ END;
 T05_ERR=$(echo "${T05_UQ}" | grep 'ERR=' | grep -oE '\-?[0-9]+$' | tail -1)
 chk "T05-2: UQ制約違反でINSERT失敗" "-1" "${T05_ERR}"
 
+# CHECK制約違反: 不正STATUS値
+T05_3_OUT=$(printf "
+SET SERVEROUTPUT ON SIZE UNLIMITED
+BEGIN
+    INSERT INTO APPLY_BATCH (
+        MIG_RUN_ID, BATCH_NO, FROM_COMMIT_SCN, TO_COMMIT_SCN, STATUS, CREATED_AT
+    ) VALUES (${RUN_ID}, 99, 400001, 500000, 'INVALID_STATUS', SYSTIMESTAMP);
+    COMMIT;
+EXCEPTION
+    WHEN OTHERS THEN
+        ROLLBACK;
+        DBMS_OUTPUT.PUT_LINE('ORA:'||SQLCODE);
+END;
+/
+" | docker exec -i oracle-tgt bash -c "sqlplus -s migration_ctl/${MIGRATION_CTL_PASS}@localhost:1521/XEPDB1")
+chk "T05-3: 不正STATUS値でINSERT失敗" "ORA:-2290" "$(echo "$T05_3_OUT" | grep 'ORA:')"
+
 echo ""
 
 # ============================================================
@@ -546,9 +563,9 @@ chk "T07-2: BEGIN_LOGMINER_BATCH → STATUS='RUNNING'" "RUNNING" "${T07_STS2}"
 mctl_sql_raw "
 BEGIN
     PKG_MIG_ADMIN.COMPLETE_LOGMINER_BATCH(
-        p_batch_id   => ${T07_BATCH_ID},
-        p_change_cnt => 100,
-        p_tx_cnt     => 10
+        p_batch_id     => ${T07_BATCH_ID},
+        p_change_count => 100,
+        p_tx_count     => 10
     );
     COMMIT;
 END;
@@ -1057,9 +1074,14 @@ chk "T12-4: 2回目UPSERT後も行数=1（重複なし）" "1" "${T12_AW_CNT}"
 echo ""
 
 # ============================================================
-# T13: 不変条件テスト（差分DMLとチェックポイントの同一トランザクション）
+# T13: 不変条件（差分DML + チェックポイント同一トランザクション）
 # ============================================================
-echo "=== T13: 不変条件（差分DML + チェックポイント同一トランザクション） ==="
+echo "=== T13: 不変条件（差分DML + チェックポイント同一トランザクション）==="
+# 段1では各APIが内部でCOMMITを発行するため、「同一トランザクション性」は
+# 段3のAPPLY_WRITER実装（API非経由の直接DML）で実現・検証する。
+# 本テストはCOMPLETE_APPLY_TASKとUPSERT_CHECKPOINTが各々正常動作し、
+# ROLLBACKで各々が独立して巻き戻ることを確認する。
+# 真の不変条件（同一COMMIT）の検証は segment 3 E2Eテストで実施する。
 
 # APPLY_TASKのCOMPLETE + UPSERT_CHECKPOINT を同一PLSQLブロック内で実行
 # T11_TASK_OUT の最初のタスクIDを取得

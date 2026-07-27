@@ -244,9 +244,9 @@ CREATE OR REPLACE PACKAGE PKG_MIG_ADMIN AS
     PROCEDURE BEGIN_LOGMINER_BATCH (p_batch_id IN NUMBER);
 
     PROCEDURE COMPLETE_LOGMINER_BATCH (
-        p_batch_id   IN NUMBER,
-        p_change_cnt IN NUMBER DEFAULT NULL,
-        p_tx_cnt     IN NUMBER DEFAULT NULL
+        p_batch_id     IN NUMBER,
+        p_change_count IN NUMBER DEFAULT NULL,
+        p_tx_count     IN NUMBER DEFAULT NULL
     );
 
     PROCEDURE FAIL_LOGMINER_BATCH (
@@ -332,14 +332,14 @@ CREATE OR REPLACE PACKAGE PKG_MIG_ADMIN AS
     PROCEDURE BULK_INS_APPLY_TASKS (p_rows IN T_APPLY_TASK_TBL);
 
     -- 状態更新ユーティリティ
-    PROCEDURE UPDATE_MINED_TX_STS (
-        p_mined_tx_id  IN NUMBER,
-        p_new_status   IN VARCHAR2
+    PROCEDURE UPDATE_MINED_TX_STATUS (
+        p_mined_transaction_id IN NUMBER,
+        p_new_status           IN VARCHAR2
     );
 
-    PROCEDURE UPDATE_MINED_CHG_STS (
-        p_mined_chg_id IN NUMBER,
-        p_new_status   IN VARCHAR2
+    PROCEDURE UPDATE_MINED_CHG_STATUS (
+        p_mined_change_id IN NUMBER,
+        p_new_status      IN VARCHAR2
     );
 
 END PKG_MIG_ADMIN;
@@ -1556,9 +1556,9 @@ CREATE OR REPLACE PACKAGE BODY PKG_MIG_ADMIN AS
     -- COMPLETE_LOGMINER_BATCH: RUNNING → COMPLETED
     -- -------------------------------------------------------------------------
     PROCEDURE COMPLETE_LOGMINER_BATCH (
-        p_batch_id   IN NUMBER,
-        p_change_cnt IN NUMBER DEFAULT NULL,
-        p_tx_cnt     IN NUMBER DEFAULT NULL
+        p_batch_id     IN NUMBER,
+        p_change_count IN NUMBER DEFAULT NULL,
+        p_tx_count     IN NUMBER DEFAULT NULL
     ) IS
         v_status VARCHAR2(20);
         v_run_id NUMBER;
@@ -1576,16 +1576,16 @@ CREATE OR REPLACE PACKAGE BODY PKG_MIG_ADMIN AS
 
         UPDATE LOGMINER_BATCH
         SET    STATUS            = 'COMPLETED',
-               CHANGE_COUNT      = p_change_cnt,
-               TRANSACTION_COUNT = p_tx_cnt,
+               CHANGE_COUNT      = p_change_count,
+               TRANSACTION_COUNT = p_tx_count,
                FINISHED_AT       = SYSTIMESTAMP,
                UPDATED_AT        = SYSTIMESTAMP
         WHERE  LOGMINER_BATCH_ID = p_batch_id;
 
         LOG_STATUS_CHANGE(v_run_id, 'LOGMINER_BATCH', p_batch_id,
             'RUNNING', 'COMPLETED',
-            'change_cnt=' || NVL(TO_CHAR(p_change_cnt), 'NULL') ||
-            ' tx_cnt=' || NVL(TO_CHAR(p_tx_cnt), 'NULL'));
+            'change_count=' || NVL(TO_CHAR(p_change_count), 'NULL') ||
+            ' tx_count=' || NVL(TO_CHAR(p_tx_count), 'NULL'));
         COMMIT;
     EXCEPTION
         WHEN NO_DATA_FOUND THEN
@@ -1678,23 +1678,38 @@ CREATE OR REPLACE PACKAGE BODY PKG_MIG_ADMIN AS
         p_archive_log_id IN NUMBER,
         p_mining_status  IN VARCHAR2
     ) IS
-        v_cnt NUMBER;
+        v_old_status  ARCHIVE_LOG.MINING_STATUS%TYPE;
+        v_run_id      ARCHIVE_LOG.MIG_RUN_ID%TYPE;
     BEGIN
-        SELECT COUNT(*) INTO v_cnt
-        FROM   ARCHIVE_LOG WHERE ARCHIVE_LOG_ID = p_archive_log_id;
-
-        IF v_cnt = 0 THEN
-            RAISE_APPLICATION_ERROR(-20002,
-                'SET_MINING_STATUS: ARCHIVE_LOG not found: id=' || p_archive_log_id);
-        END IF;
+        SELECT MIG_RUN_ID, MINING_STATUS
+          INTO v_run_id, v_old_status
+          FROM ARCHIVE_LOG
+         WHERE ARCHIVE_LOG_ID = p_archive_log_id;
 
         UPDATE ARCHIVE_LOG
-        SET    MINING_STATUS = p_mining_status,
+           SET MINING_STATUS = p_mining_status,
                UPDATED_AT    = SYSTIMESTAMP
-        WHERE  ARCHIVE_LOG_ID = p_archive_log_id;
+         WHERE ARCHIVE_LOG_ID = p_archive_log_id;
+
+        IF SQL%ROWCOUNT = 0 THEN
+            RAISE_APPLICATION_ERROR(-20002,
+                'ARCHIVE_LOG not found: id=' || p_archive_log_id);
+        END IF;
+
+        LOG_STATUS_CHANGE(
+            p_run_id     => v_run_id,
+            p_table_name => 'ARCHIVE_LOG',
+            p_record_id  => p_archive_log_id,
+            p_old_status => v_old_status,
+            p_new_status => p_mining_status,
+            p_note       => 'MINING_STATUS'
+        );
 
         COMMIT;
     EXCEPTION
+        WHEN NO_DATA_FOUND THEN
+            RAISE_APPLICATION_ERROR(-20002,
+                'SET_MINING_STATUS: ARCHIVE_LOG not found: id=' || p_archive_log_id);
         WHEN OTHERS THEN
             ROLLBACK;
             RAISE;
@@ -1707,23 +1722,38 @@ CREATE OR REPLACE PACKAGE BODY PKG_MIG_ADMIN AS
         p_archive_log_id IN NUMBER,
         p_apply_status   IN VARCHAR2
     ) IS
-        v_cnt NUMBER;
+        v_old_status  ARCHIVE_LOG.APPLY_STATUS%TYPE;
+        v_run_id      ARCHIVE_LOG.MIG_RUN_ID%TYPE;
     BEGIN
-        SELECT COUNT(*) INTO v_cnt
-        FROM   ARCHIVE_LOG WHERE ARCHIVE_LOG_ID = p_archive_log_id;
-
-        IF v_cnt = 0 THEN
-            RAISE_APPLICATION_ERROR(-20002,
-                'SET_APPLY_STATUS: ARCHIVE_LOG not found: id=' || p_archive_log_id);
-        END IF;
+        SELECT MIG_RUN_ID, APPLY_STATUS
+          INTO v_run_id, v_old_status
+          FROM ARCHIVE_LOG
+         WHERE ARCHIVE_LOG_ID = p_archive_log_id;
 
         UPDATE ARCHIVE_LOG
-        SET    APPLY_STATUS = p_apply_status,
+           SET APPLY_STATUS = p_apply_status,
                UPDATED_AT   = SYSTIMESTAMP
-        WHERE  ARCHIVE_LOG_ID = p_archive_log_id;
+         WHERE ARCHIVE_LOG_ID = p_archive_log_id;
+
+        IF SQL%ROWCOUNT = 0 THEN
+            RAISE_APPLICATION_ERROR(-20002,
+                'ARCHIVE_LOG not found: id=' || p_archive_log_id);
+        END IF;
+
+        LOG_STATUS_CHANGE(
+            p_run_id     => v_run_id,
+            p_table_name => 'ARCHIVE_LOG',
+            p_record_id  => p_archive_log_id,
+            p_old_status => v_old_status,
+            p_new_status => p_apply_status,
+            p_note       => 'APPLY_STATUS'
+        );
 
         COMMIT;
     EXCEPTION
+        WHEN NO_DATA_FOUND THEN
+            RAISE_APPLICATION_ERROR(-20002,
+                'SET_APPLY_STATUS: ARCHIVE_LOG not found: id=' || p_archive_log_id);
         WHEN OTHERS THEN
             ROLLBACK;
             RAISE;
@@ -2140,7 +2170,9 @@ CREATE OR REPLACE PACKAGE BODY PKG_MIG_ADMIN AS
         p_error_id  IN NUMBER  DEFAULT NULL,
         p_error_msg IN VARCHAR2 DEFAULT NULL
     ) IS
-        v_status VARCHAR2(20);
+        v_status   VARCHAR2(20);
+        v_batch_id NUMBER;
+        v_run_id   NUMBER;
     BEGIN
         SELECT STATUS INTO v_status
         FROM   APPLY_TASK
@@ -2160,6 +2192,16 @@ CREATE OR REPLACE PACKAGE BODY PKG_MIG_ADMIN AS
                ERROR_MESSAGE  = p_error_msg,
                UPDATED_AT     = SYSTIMESTAMP
         WHERE  APPLY_TASK_ID = p_task_id;
+
+        -- LOG_STATUS_CHANGE を追加（APPLY_TASK の ERROR 遷移は追跡対象）
+        SELECT APPLY_BATCH_ID INTO v_batch_id
+        FROM   APPLY_TASK WHERE APPLY_TASK_ID = p_task_id;
+
+        SELECT MIG_RUN_ID INTO v_run_id
+        FROM   APPLY_BATCH WHERE APPLY_BATCH_ID = v_batch_id;
+
+        LOG_STATUS_CHANGE(v_run_id, 'APPLY_TASK', p_task_id, 'RUNNING', 'ERROR',
+            'error_id=' || NVL(TO_CHAR(p_error_id), 'NULL'));
 
         COMMIT;
     EXCEPTION
@@ -2209,22 +2251,22 @@ CREATE OR REPLACE PACKAGE BODY PKG_MIG_ADMIN AS
     END BULK_INS_APPLY_TASKS;
 
     -- -------------------------------------------------------------------------
-    -- UPDATE_MINED_TX_STS: MINED_TRANSACTION.STATUS を更新
+    -- UPDATE_MINED_TX_STATUS: MINED_TRANSACTION.STATUS を更新
     -- -------------------------------------------------------------------------
-    PROCEDURE UPDATE_MINED_TX_STS (
-        p_mined_tx_id IN NUMBER,
-        p_new_status  IN VARCHAR2
+    PROCEDURE UPDATE_MINED_TX_STATUS (
+        p_mined_transaction_id IN NUMBER,
+        p_new_status           IN VARCHAR2
     ) IS
     BEGIN
         UPDATE MINED_TRANSACTION
         SET    STATUS     = p_new_status,
                UPDATED_AT = SYSTIMESTAMP
-        WHERE  MINED_TRANSACTION_ID = p_mined_tx_id;
+        WHERE  MINED_TRANSACTION_ID = p_mined_transaction_id;
 
         IF SQL%ROWCOUNT = 0 THEN
             RAISE_APPLICATION_ERROR(-20002,
-                'UPDATE_MINED_TX_STS: MINED_TRANSACTION not found: id=' ||
-                p_mined_tx_id);
+                'UPDATE_MINED_TX_STATUS: MINED_TRANSACTION not found: id=' ||
+                p_mined_transaction_id);
         END IF;
 
         COMMIT;
@@ -2232,25 +2274,25 @@ CREATE OR REPLACE PACKAGE BODY PKG_MIG_ADMIN AS
         WHEN OTHERS THEN
             ROLLBACK;
             RAISE;
-    END UPDATE_MINED_TX_STS;
+    END UPDATE_MINED_TX_STATUS;
 
     -- -------------------------------------------------------------------------
-    -- UPDATE_MINED_CHG_STS: MINED_CHANGE.STATUS を更新
+    -- UPDATE_MINED_CHG_STATUS: MINED_CHANGE.STATUS を更新
     -- -------------------------------------------------------------------------
-    PROCEDURE UPDATE_MINED_CHG_STS (
-        p_mined_chg_id IN NUMBER,
-        p_new_status   IN VARCHAR2
+    PROCEDURE UPDATE_MINED_CHG_STATUS (
+        p_mined_change_id IN NUMBER,
+        p_new_status      IN VARCHAR2
     ) IS
     BEGIN
         UPDATE MINED_CHANGE
         SET    STATUS     = p_new_status,
                UPDATED_AT = SYSTIMESTAMP
-        WHERE  MINED_CHANGE_ID = p_mined_chg_id;
+        WHERE  MINED_CHANGE_ID = p_mined_change_id;
 
         IF SQL%ROWCOUNT = 0 THEN
             RAISE_APPLICATION_ERROR(-20002,
-                'UPDATE_MINED_CHG_STS: MINED_CHANGE not found: id=' ||
-                p_mined_chg_id);
+                'UPDATE_MINED_CHG_STATUS: MINED_CHANGE not found: id=' ||
+                p_mined_change_id);
         END IF;
 
         COMMIT;
@@ -2258,7 +2300,7 @@ CREATE OR REPLACE PACKAGE BODY PKG_MIG_ADMIN AS
         WHEN OTHERS THEN
             ROLLBACK;
             RAISE;
-    END UPDATE_MINED_CHG_STS;
+    END UPDATE_MINED_CHG_STATUS;
 
 END PKG_MIG_ADMIN;
 /
