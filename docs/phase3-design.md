@@ -220,20 +220,21 @@ WHEN NOT MATCHED THEN
 
 ## 4. 成果物一覧
 
-以下のファイルを実装する（本ドキュメント作成時点: 未着手）。
+以下のファイルを実装する（2026-07-27 時点で全ファイル実装・E2Eテスト PASS 確認済み）。
 
 | # | 分類 | ファイル | 役割 | ステータス |
 |---|---|---|---|---|
-| 管 | 管理 | `sql/migration_ctl/06_mig_checkpoint.sql` | MIG_CHECKPOINT テーブル DDL（SEQUENCE・トリガー込み） | 未着手 |
-| 管 | 管理 | `sql/migration_ctl/07_pkg_mig_admin_phase3.sql` | PKG_MIG_ADMIN へのフェーズ3追加 API（PACKAGE BODY 全体再作成） | 未着手 |
-| P3 | Phase3 | `sql/phase3/01_build_logminer_dict_src.sql` | oracle-src CDB$ROOT での LogMiner 辞書ビルド SQL | 未着手 |
-| P3 | Phase3 | `sql/phase3/02_verify_dict_markers_src.sql` | V$ARCHIVED_LOG で DICTIONARY_BEGIN/END マーカーを確認するSQL | 未着手 |
-| P3 | Phase3 | `sql/phase3/03_register_archive_log_tgt.sql` | ARCHIVE_LOG / ARCHIVE_LOG_COPY 台帳登録 SQL（使用例） | 未着手 |
-| P3 | Phase3 | `sql/phase3/04_finalize_archive_log_tgt.sql` | 最終ログ確定手順（SET_TARGET_END_SCN 使用） | 未着手 |
-| P3 | Phase3 | `sql/phase3/05_cleanup_for_retry.sql` | フェーズ3の再実行用初期化 | 未着手 |
-| SC | スクリプト | `scripts/67_collect_archivelogs.sh` | Archived Redo 収集・台帳登録・チェックサム検証 | 未着手 |
-| SC | スクリプト | `scripts/68_build_logminer_dict.sh` | 辞書ビルド・マーカー確認・ARCHIVE_LOG 更新 | 未着手 |
-| SC | スクリプト | `scripts/69_test_phase3_e2e.sh` | E2E テスト（T01〜T08） | 未着手 |
+| 管 | 管理 | `sql/migration_ctl/06_mig_checkpoint.sql` | MIG_CHECKPOINT テーブル DDL（SEQUENCE・トリガー込み） | 完了 |
+| 管 | 管理 | `sql/migration_ctl/07_pkg_mig_admin_phase3.sql` | PKG_MIG_ADMIN へのフェーズ3追加 API（PACKAGE BODY 全体再作成） | 完了 |
+| 管 | 管理 | `sql/migration_ctl/08_views_phase3.sql` | V_ARCHIVE_LOG_GAP ビュー（LAG 関数で連番欠落を検知） | 完了 |
+| P3 | Phase3 | `sql/phase3/01_build_logminer_dict_src.sql` | oracle-src CDB$ROOT での LogMiner 辞書ビルド SQL | 完了 |
+| P3 | Phase3 | `sql/phase3/02_verify_dict_markers_src.sql` | V$ARCHIVED_LOG で DICTIONARY_BEGIN/END マーカーを確認するSQL | 完了 |
+| P3 | Phase3 | `sql/phase3/03_register_archive_log_tgt.sql` | ARCHIVE_LOG / ARCHIVE_LOG_COPY 台帳登録 SQL（使用例） | 完了 |
+| P3 | Phase3 | `sql/phase3/04_finalize_archive_log_tgt.sql` | 最終ログ確定手順（SET_TARGET_END_SCN 使用） | 完了 |
+| P3 | Phase3 | `sql/phase3/05_cleanup_for_retry.sql` | フェーズ3の再実行用初期化 | 完了 |
+| SC | スクリプト | `scripts/67_collect_archivelogs.sh` | Archived Redo 収集・台帳登録・チェックサム検証 | 完了 |
+| SC | スクリプト | `scripts/68_build_logminer_dict.sh` | 辞書ビルド・マーカー確認・ARCHIVE_LOG 更新 | 完了 |
+| SC | スクリプト | `scripts/69_test_phase3_e2e.sh` | E2E テスト（T01〜T08） | 完了（PASS 確認済み） |
 
 **前提: ディレクトリ `sql/phase3/` の新設が必要**（`sql/phase1/` / `sql/phase2/` と同じ構成）。
 
@@ -467,10 +468,21 @@ oracle-src の XEPDB1（PDB）内で DBMS_LOGMNR_D.BUILD を実行した場合:
 | # | 現象 | 原因 | 実際に効いた対処 |
 |---|------|------|-----------------|
 | 1 | `07_pkg_mig_admin_phase3.sql` の PACKAGE BODY が `ORA-00904: "CONSUMED_AT": invalid identifier` と `ORA-00942: table or view does not exist` でコンパイルエラーになった。追加した6本ではなく、**既存のフェーズ1・2 API 側**で落ちていた | フェーズ3の作業前に**回帰確認のつもりで実行した `scripts/62_test_migration_ctl_e2e.sh` が破壊的だった**。同スクリプトは冒頭で `DROP USER migration_ctl CASCADE` を行い、その後 `02`（v2.0の9テーブル）と `03`（v2.0のAPI）**だけ**を再適用する。そのためフェーズ1・2で追加した `04`（`ERROR_EVENT`/`VALIDATION_RUN`/`VALIDATION_RESULT`・`CONSUMED_AT` 等の列追加）と `05`（API 8本追加）が**消えていた**。テスト自体は PASS するため、壊れたことに気づけない | `62` の Setup を「`02`・`03` だけ適用」から**「`sql/migration_ctl/` 配下の番号付きSQLを昇順で全部適用」**に変更した。新しいSQLを追加しても番号さえ振れば自動で含まれる。適用時に `ORA-`/`PLS-` を検出したら即 `exit 1` するようにし、**黙って壊れないよう**にした |
+| 2 | `COMPLETE_PHASE3` が `ORA-01400: cannot insert NULL into (MIG_STATUS_HISTORY.RECORD_ID)` で失敗した | `LOG_STATUS_CHANGE` 呼び出し時に `RECORD_ID` として `NULL` を渡していた。`PHASE_STATUS` テーブルから STATUS だけ SELECT していたため、`PHASE_STATUS_ID` が未取得だった | `SELECT PHASE_STATUS_ID, STATUS INTO v_phase_status_id, v_old_status FROM PHASE_STATUS ...` に変更し、`LOG_STATUS_CHANGE` に `v_phase_status_id` を渡すよう修正した |
+| 3 | `/migfs/archivelogs/` が WSL2 ホスト（bash スクリプト実行環境）から参照できない（`ls /migfs/` が "No such file or directory"）。`docker cp oracle-src:/path /migfs/file` もホスト側の `/migfs` に書こうとして失敗した | `/migfs` は docker の共有ボリューム（named volume）であり、コンテナ内でのみ参照可能。WSL2 ホストから直接マウントされていない | すべてのファイル操作を `docker exec oracle-src bash -c "cp '${SRC}' '${DEST}'"` でコンテナ内で実行するよう変更した。`sha256sum` や `stat` も同様 |
+| 4 | `bash scripts/69_test_phase3_e2e.sh` でテスト実行したところ `RECEIVE_ARCHIVE_LOG`・`VERIFY_ARCHIVE_LOG_COPY` などの手続き呼び出しが全て黙って失敗し、COLLECT_STATUS が変わらなかった | sqlplus では **PL/SQL ブロックを実行する `/` は独立した行に置く必要がある**。`"BEGIN ...; END;/"` のように `END;/` が同一行にあると sqlplus がスラッシュを実行コマンドと認識せず、ブロックが実行されない。エラーメッセージも出ないため気づけない | テストスクリプトの全 PL/SQL ブロック呼び出しを複数行形式（`END;\n/`）に変更し、`mctl_sql_raw` 関数を `printf | docker exec -i ... sqlplus` パイプ方式に変更した |
+| 5 | `docker exec -u oracle oracle-tgt bash -c "sqlplus ... <<'SQLEOF'\nSET SERVEROUTPUT ON\nALTER SESSION SET CONTAINER = XEPDB1;\n..."` で `DBMS_OUTPUT.PUT_LINE` の出力が完全に消えた | `SET SERVEROUTPUT ON` を `ALTER SESSION SET CONTAINER` より**前**に設定すると、コンテナ切り替えで SERVEROUTPUT 設定がリセットされ OFF になる | `ALTER SESSION SET CONTAINER = XEPDB1;` を先に実行し、**その後** `SET SERVEROUTPUT ON SIZE UNLIMITED` を設定するよう順序を変更した |
+| 6 | LogMiner（`DBMS_LOGMNR.ADD_LOGFILE`）が `ORA-65040: operation not allowed from within a pluggable database` で失敗した | テストスクリプトで `ALTER SESSION SET CONTAINER = XEPDB1` してから LogMiner を呼び出していた。LogMiner の `ADD_LOGFILE` は PDB 内からは呼び出せず、CDB$ROOT で実行する必要がある | T07 の LogMiner ブロックから `ALTER SESSION SET CONTAINER = XEPDB1;` を削除し、`/ as sysdba` 接続のまま（CDB$ROOT のまま）実行するよう変更した |
+| 7 | LogMiner で `ORA-01284: file /migfs/archivelogs/arch1_210_...dbf cannot be opened` が発生した | `ARCHIVE_LOG` テーブルには過去の複数回の辞書ビルド分が蓄積されており、`MIN(SEQUENCE_NO) WHERE DICTIONARY_BEGIN_FLAG='Y'` がセッション外の古い辞書 Seq（210）を返していた。Seq=210 のファイルは `/migfs` にコピーされておらず存在しない | `MAX(SEQUENCE_NO) WHERE DICTIONARY_BEGIN_FLAG='Y'` に変更して最新の辞書ビルド Seq を取得するよう修正した。また cp 失敗時はファイルリストに追加しない（`|| true` を排除してif分岐で制御）ようにした |
+| 8 | LogMiner で `SRC_SCHEMA.REGIONS` の INSERT/UPDATE/DELETE が検出されず（0件） | `INSERT INTO SRC_SCHEMA.REGIONS (REGION_ID, REGION_NAME) VALUES (9999, ...)` が `ORA-01400: cannot insert NULL into (REGION_CODE)` で失敗していた。`REGION_CODE` が NOT NULL 列だが INSERT に含めていなかった。エラーが `src_pdb_exec` の `/dev/null` リダイレクトで隠れていた | INSERT に `REGION_CODE => 'T07'` を追加した。また冪等性のため先頭で `DELETE FROM SRC_SCHEMA.REGIONS WHERE REGION_ID=9999` を追加した |
 
 > **本番への示唆**: 「古いテストを回したら新しいスキーマが壊れる」構造は、環境を共有していると必ず事故になる。
 > しかも**テストは PASS するため気づけない**のが最も危険。DDL を積み増していく方式を採る場合、
 > 各テストの初期化処理は**常に最新の全DDLを適用する**か、そもそも破壊的初期化をしない設計にすること。
+>
+> **sqlplus での PL/SQL 実行**: `bash -c "sqlplus ... <<'HEREDOC'\n...\nEND;/\nHEREDOC"` のパターンは
+> `END;/` が同一行のとき PL/SQL を実行しない罠がある。bash スクリプトから sqlplus を呼ぶ際は
+> パイプ経由（`printf '...\n/\n' | docker exec -i ... sqlplus`）で明示的に改行を入れること。
 
 ---
 

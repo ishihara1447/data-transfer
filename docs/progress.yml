@@ -415,9 +415,9 @@ items:
   - Archived Redo出力設定確認結果
   - 収集開始記録
   - 保持・再取得設計
-  status: in_progress
-  note: ARCHIVELOG稼働は確認済。収集開始記録・保持設計は未（管理台帳未連携）
-  evidence: ''
+  status: done
+  note: ARCHIVELOG稼働確認済。scripts/67_collect_archivelogs.sh で収集・台帳登録・チェックサム検証を実装し ARCHIVE_LOG/ARCHIVE_LOG_COPY への登録を確認。保持設計は docker 共有ボリューム /migfs/archivelogs/ で代替（本番の NFS/CIFS 方式は UNV-05 として管理）
+  evidence: scripts/69_test_phase3_e2e.sh T02/T03 PASS（2026-07-27）、scripts/67_collect_archivelogs.sh でARCHIVE_LOG/ARCHIVE_LOG_COPY への台帳登録を実装
   updated: '2026-07-27'
 - id: P3-02
   phase: P3
@@ -488,9 +488,9 @@ items:
   deliverables:
   - 最終ログ確定手順
   - 最終到達確認方法
-  status: todo
-  note: 最終ログ確定手順は未策定（SET_TARGET_END_SCN API のみ実装）
-  evidence: ''
+  status: done
+  note: sql/phase3/04_finalize_archive_log_tgt.sql に SET_TARGET_END_SCN 使用の最終ログ確定手順を実装。COMPLETE_PHASE3 で MIG_CHECKPOINT.CHECKPOINT_SCN >= TARGET_END_SCN を機械確認。本番の書込み停止・全 Thread ログスイッチ手順は別途リハーサルが必要（UNV-01）
+  evidence: sql/phase3/04_finalize_archive_log_tgt.sql 実装。scripts/69_test_phase3_e2e.sh T08 PASS で COMPLETE_PHASE3 の最終到達確認を実証（2026-07-27）
   updated: '2026-07-27'
 - id: P4-01
   phase: P4

@@ -1380,13 +1380,14 @@ CREATE OR REPLACE PACKAGE BODY PKG_MIG_ADMIN AS
     PROCEDURE COMPLETE_PHASE3 (
         p_run_id IN NUMBER
     ) IS
-        v_mining_scn  NUMBER;
-        v_target_scn  NUMBER;
-        v_err_cnt     NUMBER;
-        v_behind_cnt  NUMBER;
-        v_cp_cnt      NUMBER;
-        v_missing_cnt NUMBER;
-        v_old_status  VARCHAR2(20);
+        v_mining_scn      NUMBER;
+        v_target_scn      NUMBER;
+        v_err_cnt         NUMBER;
+        v_behind_cnt      NUMBER;
+        v_cp_cnt          NUMBER;
+        v_missing_cnt     NUMBER;
+        v_old_status      VARCHAR2(20);
+        v_phase_status_id NUMBER;
     BEGIN
         SELECT MINING_START_SCN, TARGET_END_SCN
         INTO   v_mining_scn, v_target_scn
@@ -1449,7 +1450,8 @@ CREATE OR REPLACE PACKAGE BODY PKG_MIG_ADMIN AS
                 v_missing_cnt || ')');
         END IF;
 
-        SELECT STATUS INTO v_old_status
+        SELECT PHASE_STATUS_ID, STATUS
+        INTO   v_phase_status_id, v_old_status
         FROM   PHASE_STATUS
         WHERE  MIG_RUN_ID = p_run_id AND PHASE_CODE = 'PHASE3';
 
@@ -1459,7 +1461,7 @@ CREATE OR REPLACE PACKAGE BODY PKG_MIG_ADMIN AS
                UPDATED_AT  = SYSTIMESTAMP
         WHERE  MIG_RUN_ID = p_run_id AND PHASE_CODE = 'PHASE3';
 
-        LOG_STATUS_CHANGE(p_run_id, 'PHASE_STATUS', NULL,
+        LOG_STATUS_CHANGE(p_run_id, 'PHASE_STATUS', v_phase_status_id,
             v_old_status, 'COMPLETED', 'PHASE3 all conditions satisfied');
         COMMIT;
     EXCEPTION
