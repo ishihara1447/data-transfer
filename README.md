@@ -247,6 +247,7 @@ data-transfer/
 | ドキュメント | 内容 |
 |--------------|------|
 | [`docs/handoff-guide.md`](docs/handoff-guide.md) | 🔰 **引き継ぎガイド（最初に読む1枚）**。何が検証済みで、何が仮決定で、何が本番未検証かの区別と全件台帳 |
+| [`docs/master-checklist.md`](docs/master-checklist.md) | 📋 **マスターチェックリスト**。本番移行までの決定・検証事項75件と成果物158件の全件一覧・消化状況 |
 | [`SETUP_GUIDE.md`](SETUP_GUIDE.md) | **環境の作り方・操作・トラブル対処**（IT初心者向け・目次/用語集つき） |
 | [`docs/migration-strategy.md`](docs/migration-strategy.md) | 本番移行方式の全体設計 |
 | [`docs/delta-extract-design.md`](docs/delta-extract-design.md) | 差分抽出・適用方式の詳細設計 |
