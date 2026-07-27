@@ -462,6 +462,18 @@ oracle-src の XEPDB1（PDB）内で DBMS_LOGMNR_D.BUILD を実行した場合:
 
 ---
 
+## 6.5 実装中に踏んだ失敗と対処（ノウハウ）
+
+| # | 現象 | 原因 | 実際に効いた対処 |
+|---|------|------|-----------------|
+| 1 | `07_pkg_mig_admin_phase3.sql` の PACKAGE BODY が `ORA-00904: "CONSUMED_AT": invalid identifier` と `ORA-00942: table or view does not exist` でコンパイルエラーになった。追加した6本ではなく、**既存のフェーズ1・2 API 側**で落ちていた | フェーズ3の作業前に**回帰確認のつもりで実行した `scripts/62_test_migration_ctl_e2e.sh` が破壊的だった**。同スクリプトは冒頭で `DROP USER migration_ctl CASCADE` を行い、その後 `02`（v2.0の9テーブル）と `03`（v2.0のAPI）**だけ**を再適用する。そのためフェーズ1・2で追加した `04`（`ERROR_EVENT`/`VALIDATION_RUN`/`VALIDATION_RESULT`・`CONSUMED_AT` 等の列追加）と `05`（API 8本追加）が**消えていた**。テスト自体は PASS するため、壊れたことに気づけない | `62` の Setup を「`02`・`03` だけ適用」から**「`sql/migration_ctl/` 配下の番号付きSQLを昇順で全部適用」**に変更した。新しいSQLを追加しても番号さえ振れば自動で含まれる。適用時に `ORA-`/`PLS-` を検出したら即 `exit 1` するようにし、**黙って壊れないよう**にした |
+
+> **本番への示唆**: 「古いテストを回したら新しいスキーマが壊れる」構造は、環境を共有していると必ず事故になる。
+> しかも**テストは PASS するため気づけない**のが最も危険。DDL を積み増していく方式を採る場合、
+> 各テストの初期化処理は**常に最新の全DDLを適用する**か、そもそも破壊的初期化をしない設計にすること。
+
+---
+
 ## 7. PoC 既知ノウハウ（実装時の注意）
 
 `docs/gap-analysis-5phase-schema.md` §1.2 の失敗表より引用・要約する。

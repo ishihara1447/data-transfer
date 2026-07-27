@@ -67,13 +67,28 @@ sed "s/&&MIGRATION_CTL_PASS/${MIGRATION_CTL_PASS}/g" \
 docker cp "${TMPDIR_MCT}/01_migration_ctl_user.sql" oracle-tgt:/tmp/01_migration_ctl_user.sql
 docker exec -u oracle oracle-tgt bash -c "sqlplus -S '/ as sysdba' @/tmp/01_migration_ctl_user.sql" 2>&1
 
-echo "  -> 02_migration_ctl_ddl.sql を実行します（v2.0 9テーブル）"
-docker cp "${SQL_DIR}/02_migration_ctl_ddl.sql" oracle-tgt:/tmp/02_migration_ctl_ddl.sql
-docker exec oracle-tgt bash -c "sqlplus -S migration_ctl/${MIGRATION_CTL_PASS}@localhost:1521/XEPDB1 @/tmp/02_migration_ctl_ddl.sql" 2>&1
-
-echo "  -> 03_pkg_mig_admin.sql を実行します"
-docker cp "${SQL_DIR}/03_pkg_mig_admin.sql" oracle-tgt:/tmp/03_pkg_mig_admin.sql
-docker exec oracle-tgt bash -c "sqlplus -S migration_ctl/${MIGRATION_CTL_PASS}@localhost:1521/XEPDB1 @/tmp/03_pkg_mig_admin.sql" 2>&1
+# 02 以降は sql/migration_ctl/ 配下を「番号順に全部」適用する。
+#
+# 【重要】ここで 02・03 だけを適用してはいけない。
+#   本スクリプトは冒頭で DROP USER CASCADE を行うため、02・03 だけを流すと
+#   スキーマが v2.0 相当まで巻き戻り、フェーズ1・2（04/05）やフェーズ3（06/07）で
+#   追加した列・テーブル・API が消える。後続フェーズのテストが道連れで壊れる。
+#   → 新しい SQL を追加したら、番号を振っておけば自動でここに含まれる。
+for f in $(ls "${SQL_DIR}"/[0-9][0-9]_*.sql | sort); do
+    base="$(basename "${f}")"
+    case "${base}" in
+        01_*) continue ;;   # 01 はユーザー作成済みのためスキップ
+    esac
+    echo "  -> ${base} を実行します"
+    docker cp "${f}" "oracle-tgt:/tmp/${base}" >/dev/null
+    out=$(docker exec oracle-tgt bash -c \
+        "sqlplus -S migration_ctl/${MIGRATION_CTL_PASS}@localhost:1521/XEPDB1 @/tmp/${base}" 2>&1)
+    if echo "${out}" | grep -qiE "ORA-[0-9]+|PLS-[0-9]+|compilation error"; then
+        echo "${out}" | grep -iE "ORA-[0-9]+|PLS-[0-9]+|compilation error" | head -5
+        echo "  [NG] ${base} の適用に失敗しました"
+        exit 1
+    fi
+done
 
 rm -rf "${TMPDIR_MCT}"
 echo ""
