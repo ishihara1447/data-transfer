@@ -9,13 +9,11 @@
 
 ## 1. 結論（先に3行）
 
-- フェーズ1・2の**実行資材は25点**必要（設計メモ §3.4 / §4.4）。うち**着手済みは3点のみ**（プロトタイプ相当）
-- 管理スキーマ側も不足がある。フェーズ1・2を管理テーブル連携ありで回すには
-  **テーブル3本（`ERROR_EVENT` / `VALIDATION_RUN` / `VALIDATION_RESULT`）の追加**と、
-  **既存4テーブルへの列追加**が要る
-- 検証を「動かす」だけなら既存スクリプトの延長で可能だが、
-  新設計の完了判定（§3.2.5 / §4.2.5）は**管理テーブルをSQLで突合すること**を要件にしているため、
-  管理スキーマ側の不足を埋めないと「フェーズ完了」と判定できない
+- フェーズ1・2の**実行資材は25点**必要（設計メモ §3.4 / §4.4）。うち**23点完了・2点未着手**（2-13/2-14）
+- 管理スキーマの補強は完了。`ERROR_EVENT` / `VALIDATION_RUN` / `VALIDATION_RESULT` の3テーブル追加・
+  既存4テーブルへの列追加・8本のAPIをすべて実装し、`sql/migration_ctl/04〜05` として適用済み
+- E2Eテスト（`scripts/66_test_phase1_2_e2e.sh`、T01〜T16）を実際のコンテナで実行し、
+  全テスト PASS を確認。`COMPLETE_PHASE` 機械判定・部分再実行・AS OF SCN 検証がすべて正常動作した
 
 ---
 
@@ -74,18 +72,19 @@
 > `01`〜`03` は `setup.sh` からも他スクリプトからも呼ばれておらず、
 > 自動テストもありません（`grep` で確認済み）。**「動いた実績が記録として残っていない」状態**です。
 
-### 2.2 フェーズ1・2の到達レベル
+### 2.2 フェーズ1・2の到達レベル（2026-07-27 更新）
 
 | 観点 | 状態 |
 |---|---|
-| expdp / impdp のコマンド組み立て | プロトタイプあり |
-| 基準SCNの確定・記録 | スクリプト内で都度取得。**管理テーブルへの登録なし・外部記録票なし** |
-| ジョブ分割 | **なし**（スキーマ全体を1ジョブ） |
-| ファイルのチェックサム・完全性確認 | **なし** |
-| DDLの事前確認（SQLFILE） | **なし** |
-| 取込み後の検証 | **なし**（フェーズ2の完了判定ができない） |
-| 再実行・初期化手順 | **なし** |
-| 管理テーブル連携 | **なし** |
+| expdp / impdp のコマンド組み立て | 完了。GRP01/GRP02 の2ジョブ分割で実装済み |
+| 基準SCNの確定・記録 | 完了。`FIX_BASELINE_SCN` で管理テーブルに記録し、`out/scn_record_*.txt` に外部二重記録 |
+| ジョブ分割 | 完了。GRP01=REGIONS+CUSTOMERS / GRP02=ORDERS。部分再実行（GRP02単体再実行）もE2E T07/T08 で検証済み |
+| ファイルのチェックサム・完全性確認 | 完了。expdp側でSHA-256算出・VERIFY_DATAPUMP_FILE、impdp側でTARGET_VERIFIED_AT更新 |
+| DDLの事前確認（SQLFILE） | 完了。`03_preview_ddl_grp01/grp02.par` で SQLFILE生成、APPROVAL_STATUS='APPROVED' まで管理 |
+| 取込み後の検証 | 完了。AS OF SCN で Export時点の行数と突合。327,275行（REGIONS 11+CUSTOMERS 144,482+ORDERS 182,578）一致確認済み |
+| 再実行・初期化手順 | 完了。`sql/phase2/12_cleanup_for_retry.sql`（WHENEVER SQLERROR EXIT、VALIDATION_RESULT→RUN→DATAPUMP_FILE 順でリセット） |
+| 管理テーブル連携 | 完了。PHASE_STATUS / DATAPUMP_JOB / DATAPUMP_FILE / MIGRATION_OBJECT / ERROR_EVENT / VALIDATION_RUN / VALIDATION_RESULT / MIGRATION_RUN すべて連携 |
+| COMPLETE_PHASE 機械判定 | 完了。PHASE1/PHASE2 各6条件をSQLで評価。条件未充足時は-20010で詳細を返す（T06/T10/T13 で動作確認済み） |
 
 ---
 
@@ -99,36 +98,36 @@
 
 | # | 成果物 | 役割 | 状態 | 備考 |
 |---|---|---|:---:|---|
-| 1-1 | `01_precheck_export.sql` | Export前の事前確認（表領域・権限・DIRECTORY・対象表の実在） | ❌ | |
-| 1-2 | `02_get_baseline_scn.sql` | 基準SCNの取得と長時間トランザクションの確認 | ❌ | §2.1.3・Step1「長時間・未コミットTxを確認」を含む |
-| 1-3 | `03_expdp_<job>.par` | ジョブ単位の expdp パラメータファイル | 🟡 | `01_datapump_export.sh` 内にインラインで存在。PARFILE として外出し必要 |
-| 1-4 | `04_run_expdp.sh` | Export 実行ラッパー（管理テーブル更新込み） | 🟡 | `01_datapump_export.sh` が原型。管理テーブル連携が未実装 |
-| 1-5 | `05_monitor_expdp.sql` | 実行中ジョブの監視（`DBA_DATAPUMP_JOBS` 等） | ❌ | |
-| 1-6 | `06_verify_dump_files.sh` | ダンプのサイズ・SHA-256 検証 | ❌ | §3.2.2 順序6 の前提 |
-| 1-7 | 移行対象テーブル一覧 | `MIGRATION_OBJECT` へ登録する正式スコープ | ❌ | §3.2.1 の11項目を持つこと |
-| 1-8 | Data Pumpジョブ分割一覧 | `EXPORT_GROUP_CODE` の割当 | ❌ | 5TB を1ジョブでは回らないため必須 |
-| 1-9 | 管理スキーマへのSCN・ジョブ登録SQL | `PKG_MIG_ADMIN` 呼び出し集 | ❌ | `FIX_BASELINE_SCN` / `START_DATAPUMP_JOB` 等は実装済み。**呼ぶ側**がない |
-| 1-10 | SCN外部記録票 | 基準SCNを管理DB外にも二重記録 | ❌ | §2.2.5「管理DB障害時に復元できる構成」 |
-| 1-11 | Export実行結果記録様式 | 所要時間・負荷・容量の実測記録 | ❌ | §3.1「実測した処理時間、負荷、ダンプ容量が記録されている」 |
+| 1-1 | `01_precheck_export.sql` | Export前の事前確認（表領域・権限・DIRECTORY・対象表の実在） | ✅ | `sql/phase1/01_precheck_export.sql`。GRANTEE列での権限確認を含む |
+| 1-2 | `02_get_baseline_scn.sql` | 基準SCNの取得と長時間トランザクションの確認 | ✅ | `sql/phase1/02_get_baseline_scn.sql`。長時間Tx確認クエリを含む |
+| 1-3 | `03_expdp_<job>.par` | ジョブ単位の expdp パラメータファイル | ✅ | `sql/phase1/03_expdp_grp01.par` / `03_expdp_grp02.par`。exclude=のみ使用（ORA-39120回避） |
+| 1-4 | `04_run_expdp.sh` | Export 実行ラッパー（管理テーブル更新込み） | ✅ | `scripts/63_run_expdp.sh`。管理テーブル連携・エラー記録・SCN外部記録票生成を含む |
+| 1-5 | `05_monitor_expdp.sql` | 実行中ジョブの監視（`DBA_DATAPUMP_JOBS` 等） | ✅ | `sql/phase1/05_monitor_expdp.sql` |
+| 1-6 | `06_verify_dump_files.sh` | ダンプのサイズ・SHA-256 検証 | ✅ | `scripts/63_run_expdp.sh` の Step 8 に統合。SHA-256 計算・VERIFY_DATAPUMP_FILE 呼び出し |
+| 1-7 | 移行対象テーブル一覧 | `MIGRATION_OBJECT` へ登録する正式スコープ | 🟡 | `scripts/63_run_expdp.sh` Step 4 にインライン（REGIONS/CUSTOMERS/ORDERS の3表）。独立ドキュメントなし |
+| 1-8 | Data Pumpジョブ分割一覧 | `EXPORT_GROUP_CODE` の割当 | 🟡 | GRP01=REGIONS+CUSTOMERS / GRP02=ORDERS の分割は `scripts/63_run_expdp.sh` にインライン。独立ドキュメントなし |
+| 1-9 | 管理スキーマへのSCN・ジョブ登録SQL | `PKG_MIG_ADMIN` 呼び出し集 | ✅ | `scripts/63_run_expdp.sh` に統合。FIX_BASELINE_SCN / START_DATAPUMP_JOB / COMPLETE_DATAPUMP_JOB / RAISE_ERROR_EVENT / REGISTER_DATAPUMP_FILE を呼び出す |
+| 1-10 | SCN外部記録票 | 基準SCNを管理DB外にも二重記録 | ✅ | `scripts/63_run_expdp.sh` が `out/scn_record_<run_id>_<timestamp>.txt` を生成。E2E T15 で存在確認済み |
+| 1-11 | Export実行結果記録様式 | 所要時間・負荷・容量の実測記録 | ✅ | `scripts/63_run_expdp.sh` が `out/phase1_result_<run_id>_<timestamp>.txt` を生成 |
 
 ### 3.2 フェーズ2：初回全量 Data Pump Import（14点）
 
 | # | 成果物 | 役割 | 状態 | 備考 |
 |---|---|---|:---:|---|
-| 2-1 | `01_create_migration_10_schema.sql` | DB2.0側1.0スキーマ・表領域の作成 | 🟡 | `sql/cdc/20_staging_users_tgt.sql` が近い。QUOTA・表領域設計は要見直し |
-| 2-2 | `02_grant_import_privileges.sql` | Import実行ユーザーの権限付与 | 🟡 | 同上 |
-| 2-3 | `03_preview_ddl.par` | SQLFILE 生成用パラメータ | ❌ | |
-| 2-4 | `04_import_ddl_preview.sql` | 生成DDLのレビュー支援 | ❌ | §4.2.3 のレビュー管理 |
-| 2-5 | `05_impdp_<job>.par` | ジョブ単位の impdp パラメータ | 🟡 | `03_datapump_import.sh` 内にインライン |
-| 2-6 | `06_run_impdp.sh` | Import 実行ラッパー（管理テーブル更新込み） | 🟡 | 同上。管理テーブル連携が未実装 |
-| 2-7 | `07_monitor_impdp.sql` | 実行中ジョブの監視 | ❌ | |
-| 2-8 | `08_rebuild_indexes_constraints.sql` | 索引・制約の再構築 | ❌ | フェーズ4の差分反映に必要な主キー・索引の準備（§4.1） |
-| 2-9 | `09_gather_statistics.sql` | 統計情報の取得 | ❌ | |
-| 2-10 | `10_validate_source.sql` | 移行元側の検証値取得（件数・キー集合・集計・LOBハッシュ） | ❌ | |
-| 2-11 | `11_validate_target.sql` | 移行先側の検証値取得と突合 | ❌ | 既存 `49_two_stage_verify.sh` の考え方を流用可 |
-| 2-12 | `12_cleanup_for_retry.sql` | 再Import用の初期化 | ❌ | §4.1「安全にやり直せる」 |
-| 2-13 | スキーマ対応表 / 表領域対応表 / DDL取込み・除外一覧 | REMAP 定義と DDL 方針の確定 | ❌ | |
-| 2-14 | Import結果記録様式 | 実測記録 | ❌ | |
+| 2-1 | `01_create_migration_10_schema.sql` | DB2.0側1.0スキーマ・表領域の作成 | ✅ | `sql/phase2/01_create_staging_schema.sql`。STAGING_SCHEMA ユーザー・表領域・QUOTA を設定 |
+| 2-2 | `02_grant_import_privileges.sql` | Import実行ユーザーの権限付与 | ✅ | `sql/phase2/02_grant_import_privileges.sql`。DATAPUMP_IMP_FULL_DATABASE 等を付与 |
+| 2-3 | `03_preview_ddl.par` | SQLFILE 生成用パラメータ | ✅ | `sql/phase2/03_preview_ddl_grp01.par` / `03_preview_ddl_grp02.par`。REMAP_SCHEMA 適用 |
+| 2-4 | `04_import_ddl_preview.sql` | 生成DDLのレビュー支援 | ✅ | `sql/phase2/04_import_ddl_preview.sql`。生成SQL確認クエリと APPROVAL_STATUS 更新を含む |
+| 2-5 | `05_impdp_<job>.par` | ジョブ単位の impdp パラメータ | ✅ | `sql/phase2/05_impdp_grp01.par` / `05_impdp_grp02.par`。EXCLUDE=TRIGGER,GRANT,STATISTICS で12c互換を確保 |
+| 2-6 | `06_run_impdp.sh` | Import 実行ラッパー（管理テーブル更新込み） | ✅ | `scripts/65_run_impdp.sh`。TARGET_VERIFIED_AT更新・SQLFILE生成・CONSUME_DATAPUMP_FILE・検証・COMPLETE_PHASE を含む |
+| 2-7 | `07_monitor_impdp.sql` | 実行中ジョブの監視 | ✅ | `sql/phase2/07_monitor_impdp.sql` |
+| 2-8 | `08_rebuild_indexes_constraints.sql` | 索引・制約の再構築 | ✅ | `sql/phase2/08_rebuild_indexes_constraints.sql`。DBA_INDEXES / DBA_CONSTRAINTS を使用（SYSDBA文脈での正確なビュー） |
+| 2-9 | `09_gather_statistics.sql` | 統計情報の取得 | ✅ | `sql/phase2/09_gather_statistics.sql` |
+| 2-10 | `10_validate_source.sql` | 移行元側の検証値取得（件数・キー集合・集計・LOBハッシュ） | ✅ | `sql/phase2/10_validate_source.sql`。AS OF SCN でExport時点の行数と突合 |
+| 2-11 | `11_validate_target.sql` | 移行先側の検証値取得と突合 | ✅ | `sql/phase2/11_validate_target.sql`。STAGING_SCHEMA側の行数確認と RECORD_VALIDATION_RESULT 呼び出し |
+| 2-12 | `12_cleanup_for_retry.sql` | 再Import用の初期化 | ✅ | `sql/phase2/12_cleanup_for_retry.sql`。WHENEVER SQLERROR / VALIDATION_RESULT(子)→VALIDATION_RUN(親)→DATAPUMP_FILE リセット |
+| 2-13 | スキーマ対応表 / 表領域対応表 / DDL取込み・除外一覧 | REMAP 定義と DDL 方針の確定 | ❌ | D-5方針は §1.5.2 に記載済みだが、独立ドキュメントとしては未作成 |
+| 2-14 | Import結果記録様式 | 実測記録 | ❌ | `scripts/65_run_impdp.sh` で `out/phase2_result_*.txt` 生成なし（フェーズ1の `out/phase1_result_*.txt` に相当するファイルが未対応） |
 
 ### 3.3 管理スキーマ側の不足（実装済みDDLとの照合結果）
 

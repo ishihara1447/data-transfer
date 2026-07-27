@@ -1,14 +1,15 @@
--- Phase 1 Export GRP01: REGIONS + CUSTOMERS
--- 実行: expdp $EXPDP_USER/$EXPDP_PASS@//oracle-src:1521/XEPDB1 parfile=03_expdp_grp01.par
--- 注意: PARALLEL>=2 は 21c XE では ORA-39094 で失敗するため parallel=1 を使用
---       COMPRESSION=ALL は 21c XE では ORA-00439 で失敗するためデフォルト(METADATA_ONLY)使用
--- 本番では別途確認が必要な項目:
---       PARALLEL 値（本番環境のCPU数・ライセンスに依存）
---       COMPRESSION オプション（Advanced Compression Option のライセンスが必要）
---
--- このファイルは環境変数プレースホルダー形式です。
--- 63_run_expdp.sh がシェル変数展開で実際の値を代入して expdp を直接実行します。
--- 手動実行する場合は envsubst 等で変数を置換してから使用してください。
+# Phase 1 Export GRP01: REGIONS + CUSTOMERS
+# 実行: envsubst < sql/phase1/03_expdp_grp01.par | expdp /
+# 注意: PARALLEL>=2 は 21c XE では ORA-39094 で失敗するため parallel=1 を使用
+#       COMPRESSION=ALL は 21c XE では ORA-00439 で失敗するためデフォルト(METADATA_ONLY)使用
+#       INCLUDE と EXCLUDE は同一ジョブで併用不可(ORA-39120)。exclude のみを使用する。
+# 本番では別途確認が必要な項目:
+#       PARALLEL 値（本番環境のCPU数・ライセンスに依存）
+#       COMPRESSION オプション（Advanced Compression Option のライセンスが必要）
+#
+# このファイルは環境変数プレースホルダー形式です。
+# 63_run_expdp.sh がシェル変数展開で実際の値を代入して expdp を直接実行します。
+# 手動実行する場合は envsubst 等で変数を置換してから使用してください。
 userid=${EXPDP_USER}/${EXPDP_PASS}@//oracle-src:1521/XEPDB1
 tables=SRC_SCHEMA.REGIONS,SRC_SCHEMA.CUSTOMERS
 flashback_scn=${BASELINE_SCN}
@@ -16,6 +17,5 @@ dumpfile=exp_grp01_%U.dmp
 logfile=exp_grp01.log
 directory=MIG_FS_DIR
 content=ALL
-include=TABLE,CONSTRAINT,INDEX
 exclude=TRIGGER,GRANT,STATISTICS
 parallel=1

@@ -237,56 +237,57 @@ else
 fi
 
 # ============================================================
-# Step 5: DATAPUMP_JOB を PLANNED で登録
+# Step 5: DATAPUMP_JOB を PLANNED で登録（TARGET_GROUP に応じて登録対象を限定）
+# 注意: 両グループを無条件に登録すると COMPLETE_PHASE の「全 EXPORT ジョブが
+#       COMPLETED」条件を満たせなくなるため、実行するグループのみ登録する。
 # ============================================================
-log "--- Step 5: DATAPUMP_JOB 登録 ---"
+log "--- Step 5: DATAPUMP_JOB 登録 (TARGET_GROUP=${TARGET_GROUP}) ---"
 
-GRP01_TS=$(date +%Y%m%d%H%M%S)
-
-GRP01_JOB_ID=$(docker exec "${MCTL_HOST}" bash -c \
-    "sqlplus -S ${MCTL_USER}/${MCTL_PASS}@localhost:${MCTL_PORT}/${MCTL_SVC} <<'SQLEOF'
+register_datapump_job() {
+    local GROUP_NAME="$1"
+    local LOG_FILE="$2"
+    local TS
+    TS=$(date +%Y%m%d%H%M%S)
+    local JOB_ID
+    JOB_ID=$(docker exec "${MCTL_HOST}" bash -c \
+        "sqlplus -S ${MCTL_USER}/${MCTL_PASS}@localhost:${MCTL_PORT}/${MCTL_SVC} <<'SQLEOF'
 SET PAGESIZE 0 FEEDBACK OFF HEADING OFF TRIMSPOOL ON
 INSERT INTO DATAPUMP_JOB (
     MIG_RUN_ID, JOB_NAME, OPERATION, STATUS, BASELINE_SCN,
     DIRECTORY_NAME, LOG_FILE_NAME
 ) VALUES (
-    ${RUN_ID}, 'EXPDP_GRP01_${GRP01_TS}', 'EXPORT', 'PLANNED', ${BASELINE_SCN},
-    'MIG_FS_DIR', 'exp_grp01.log'
+    ${RUN_ID}, 'EXPDP_${GROUP_NAME}_${TS}', 'EXPORT', 'PLANNED', ${BASELINE_SCN},
+    'MIG_FS_DIR', '${LOG_FILE}'
 );
 COMMIT;
 SELECT SEQ_DATAPUMP_JOB.CURRVAL FROM DUAL;
 EXIT;
 SQLEOF" 2>&1 | tr -d ' \t' | grep -E '^[0-9]+$' | tail -1)
+    echo "${JOB_ID}"
+}
 
-# GRP02 は 1 秒後に登録してタイムスタンプの衝突を防ぐ
-sleep 1
-GRP02_TS=$(date +%Y%m%d%H%M%S)
+GRP01_JOB_ID=""
+GRP02_JOB_ID=""
 
-GRP02_JOB_ID=$(docker exec "${MCTL_HOST}" bash -c \
-    "sqlplus -S ${MCTL_USER}/${MCTL_PASS}@localhost:${MCTL_PORT}/${MCTL_SVC} <<'SQLEOF'
-SET PAGESIZE 0 FEEDBACK OFF HEADING OFF TRIMSPOOL ON
-INSERT INTO DATAPUMP_JOB (
-    MIG_RUN_ID, JOB_NAME, OPERATION, STATUS, BASELINE_SCN,
-    DIRECTORY_NAME, LOG_FILE_NAME
-) VALUES (
-    ${RUN_ID}, 'EXPDP_GRP02_${GRP02_TS}', 'EXPORT', 'PLANNED', ${BASELINE_SCN},
-    'MIG_FS_DIR', 'exp_grp02.log'
-);
-COMMIT;
-SELECT SEQ_DATAPUMP_JOB.CURRVAL FROM DUAL;
-EXIT;
-SQLEOF" 2>&1 | tr -d ' \t' | grep -E '^[0-9]+$' | tail -1)
-
-if [ -z "${GRP01_JOB_ID}" ]; then
-    log "[ERROR] GRP01 の DATAPUMP_JOB_ID 取得に失敗しました。"
-    exit 1
-fi
-if [ -z "${GRP02_JOB_ID}" ]; then
-    log "[ERROR] GRP02 の DATAPUMP_JOB_ID 取得に失敗しました。"
-    exit 1
+if [ "${TARGET_GROUP}" = "GRP01" ] || [ "${TARGET_GROUP}" = "ALL" ]; then
+    GRP01_JOB_ID=$(register_datapump_job "GRP01" "exp_grp01.log")
+    if [ -z "${GRP01_JOB_ID}" ]; then
+        log "[ERROR] GRP01 の DATAPUMP_JOB_ID 取得に失敗しました。"
+        exit 1
+    fi
+    log "GRP01_JOB_ID: ${GRP01_JOB_ID}"
 fi
 
-log "GRP01_JOB_ID: ${GRP01_JOB_ID}, GRP02_JOB_ID: ${GRP02_JOB_ID}"
+if [ "${TARGET_GROUP}" = "GRP02" ] || [ "${TARGET_GROUP}" = "ALL" ]; then
+    # タイムスタンプ衝突防止のため GRP01 の 1 秒後に登録
+    [ -n "${GRP01_JOB_ID}" ] && sleep 1
+    GRP02_JOB_ID=$(register_datapump_job "GRP02" "exp_grp02.log")
+    if [ -z "${GRP02_JOB_ID}" ]; then
+        log "[ERROR] GRP02 の DATAPUMP_JOB_ID 取得に失敗しました。"
+        exit 1
+    fi
+    log "GRP02_JOB_ID: ${GRP02_JOB_ID}"
+fi
 
 # ============================================================
 # Step 6: expdp 実行関数

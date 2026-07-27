@@ -687,8 +687,10 @@ fi
 # ============================================================
 log "--- Step 10: COMPLETE_PHASE 機械判定 ---"
 
+COMPLETE_PHASE_EXIT=0
 docker exec "${TGT_HOST}" bash -c \
     "sqlplus -S ${MCTL_USER}/${MCTL_PASS}@localhost:${TGT_PORT}/${TGT_SVC} <<'EOF'
+WHENEVER SQLERROR EXIT SQL.SQLCODE
 SET SERVEROUTPUT ON
 BEGIN
     PKG_MIG_ADMIN.COMPLETE_PHASE(
@@ -700,7 +702,13 @@ BEGIN
 END;
 /
 EXIT;
-EOF" 2>&1
+EOF" 2>&1 || COMPLETE_PHASE_EXIT=$?
+
+if [ "${COMPLETE_PHASE_EXIT}" -ne 0 ]; then
+    log "[ERROR] COMPLETE_PHASE(PHASE2) が失敗しました（exit=${COMPLETE_PHASE_EXIT}）。"
+    log "        完了条件が満たされていません。PHASE_STATUS / ERROR_EVENT / VALIDATION_RUN を確認してください。"
+    exit "${COMPLETE_PHASE_EXIT}"
+fi
 
 log ""
 log "=== Phase 2 Import 完了 ==="
