@@ -1,5 +1,5 @@
 meta:
-  source: 設計メモ「Oracleデータ移行 調査・検討・検証・設計事項一覧（5フェーズ・移行管理テーブル連携反映版）」§3.3/§4.3/§5.3/§6.3/§7.3
+  source: 設計メモ「Oracleデータ移行 調査・検討・検証・設計事項一覧（5フェーズ・移行管理テーブル連携反映版）」§3.3/§4.3/§5.3/§6.3/§7.3 ＋ 2026-07-27「Oracle更新日時差分ダンプ方式 再検証・高度化検討書」
   status_values:
     done: ✅ 完了（evidence に確認方法を必ず書く）
     in_progress: 🟡 着手・部分的
@@ -28,10 +28,12 @@ items:
   - 移行対象テーブル一覧
   - 対象外一覧
   - 1.0スキーマ作成対象一覧
+  - 主キー・更新日時・DML・LOB・パーティション棚卸し
+  - テーブル別差分方式分類カタログ
   status: in_progress
-  note: TMP-10 で仮決定（3表）。本番500表の正式化は未
-  evidence: ''
-  updated: '2026-07-27'
+  note: TMP-10 で仮決定（3表）。本番500表の正式化と適応型差分方式の分類に必要な棚卸しは未
+  evidence: docs/delta-method-decision-matrix.md / docs/delta-performance-poc-plan.md に必要項目と分類ゲートを定義
+  updated: '2026-07-28'
 - id: P1-03
   phase: P1
   priority: A
@@ -93,10 +95,10 @@ items:
   - UNDO容量試算
   - ORA-01555試験結果
   - 対策方針
-  status: todo
-  note: UNDO容量試算・ORA-01555試験は未実施（UNV-02）
-  evidence: ''
-  updated: '2026-07-27'
+  status: in_progress
+  note: 変更キー方式で必要なUNDO保持時間の算定式とC1/C2比較条件を設計。容量試算・ORA-01555試験は未実施（UNV-02/10）
+  evidence: docs/dirty-key-snapshot-design.md §2/§9、docs/delta-performance-poc-plan.md P3/P4
+  updated: '2026-07-28'
 - id: P1-08
   phase: P1
   priority: A
@@ -206,10 +208,10 @@ items:
   deliverables:
   - LOB全量Export試験結果
   - LOBジョブ分割方針
-  status: todo
-  note: LOB全量Export試験は未実施
-  evidence: ''
-  updated: '2026-07-27'
+  status: in_progress
+  note: 21c XEの代表LOB表で全行Exportを実測済み。5TB/500表のLOBジョブ分割と本番相当性能は未確定
+  evidence: docs/datapump-performance-analysis.md B1、scripts/74_benchmark_datapump.sh
+  updated: '2026-07-28'
 - id: P2-01
   phase: P2
   priority: A
@@ -539,11 +541,12 @@ items:
   title: LogMiner処理単位
   deliverables:
   - LogMinerバッチ分割設計
+  - 移行先／移行元LogMiner構成比較
   - 性能測定結果
-  status: todo
-  note: LogMinerバッチ分割設計は未（LOGMINER_BATCH 未実装）
-  evidence: ''
-  updated: '2026-07-27'
+  status: in_progress
+  note: LOGMINER_BATCHは実装済み。SCN区間、工程別チェックポイント、C1/C2比較条件を設計したが、長時間Tx・性能PoCは未
+  evidence: docs/phase4-design.md §10.5、docs/dirty-key-snapshot-design.md、docs/delta-performance-poc-plan.md
+  updated: '2026-07-28'
 - id: P4-05
   phase: P4
   priority: A
@@ -612,9 +615,9 @@ items:
   - 行特定方式
   - PoC結果
   status: in_progress
-  note: 旧方式は replay_category 分類＋手動調査キューで回避。主キー特定方式は未確立
-  evidence: ''
-  updated: '2026-07-27'
+  note: MINE_VALUE/COLUMN_PRESENTで旧・新PKを列単位取得する候補設計を作成。複合PK・文字列PK・非対応型のPoCは未
+  evidence: docs/dirty-key-snapshot-design.md §5、docs/delta-performance-poc-plan.md
+  updated: '2026-07-28'
 - id: P4-11
   phase: P4
   priority: A
@@ -656,11 +659,12 @@ items:
   title: MERGEと直接DMLの使い分け
   deliverables:
   - DML使い分け基準
+  - テーブル別差分方式選択基準
   - 性能比較結果
-  status: todo
-  note: MERGE と直接DMLの使い分け基準は未策定
-  evidence: ''
-  updated: '2026-07-27'
+  status: in_progress
+  note: 適応型の方式判断表と比較PoC計画を作成。MERGE・直接DML・最終状態UPSERTの性能比較は未
+  evidence: docs/delta-method-decision-matrix.md / docs/delta-performance-poc-plan.md
+  updated: '2026-07-28'
 - id: P4-15
   phase: P4
   priority: A
@@ -763,9 +767,9 @@ items:
   - 処理能力比較
   - 追付き可否判定
   status: blocked_env
-  note: 追付き性能は本環境では評価不可（UNV-02）
-  evidence: ''
-  updated: '2026-07-27'
+  note: 計測指標と比較方式は計画済み。絶対性能・追付き性能は本番相当環境でのみ判定可能（UNV-02/10）
+  evidence: docs/delta-performance-poc-plan.md §6
+  updated: '2026-07-28'
 - id: P4-24
   phase: P4
   priority: B
@@ -797,10 +801,11 @@ items:
   title: フェーズ4の合格基準
   deliverables:
   - フェーズ4完了判定基準
-  status: todo
-  note: フェーズ4の合格基準は未形式化
-  evidence: ''
-  updated: '2026-07-27'
+  - 方式別正確性合格基準
+  status: in_progress
+  note: 欠落0・最終重複0・同一SCN断面・再実行一致・未完了チェックポイント禁止を方式PoCの共通基準として形式化。Phase4全体承認条件は未完
+  evidence: docs/dirty-key-snapshot-design.md §8、docs/delta-performance-poc-plan.md §5/§9
+  updated: '2026-07-28'
 - id: P5-01
   phase: P5
   priority: B

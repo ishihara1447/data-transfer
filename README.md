@@ -23,7 +23,7 @@
 
 <!-- PROGRESS:START -->
 
-本番移行までに必要な**決定・検証事項 75 件**（成果物 延べ 158 件）の消化状況です。
+本番移行までに必要な**決定・検証事項 75 件**（成果物 延べ 163 件）の消化状況です。
 一覧は [`docs/master-checklist.md`](docs/master-checklist.md)、判断の根拠は [`docs/handoff-guide.md`](docs/handoff-guide.md) を参照。
 
 ```
@@ -32,17 +32,17 @@
 
 | | ✅完了 | 🟡着手・部分 | ❌未着手 | 🔴本環境では不可 | 計 |
 |---|---:|---:|---:|---:|---:|
-| フェーズ1 | 6 | 4 | 4 | 2 | 16 |
+| フェーズ1 | 6 | 6 | 2 | 2 | 16 |
 | フェーズ2 | 9 | 3 | 2 | 2 | 16 |
 | フェーズ3 | 5 | 1 | 1 | 0 | 7 |
-| フェーズ4 | 10 | 6 | 8 | 2 | 26 |
+| フェーズ4 | 10 | 9 | 5 | 2 | 26 |
 | フェーズ5 | 3 | 3 | 4 | 0 | 10 |
-| **合計** | **33** | **17** | **19** | **6** | **75** |
+| **合計** | **33** | **22** | **14** | **6** | **75** |
 
 > 🔴 6件は規模・構成の違いにより**この検証環境では実施できません**（本番相当環境が必要）。
 > したがってこの環境で進められる母数は **69件** です。
 
-<sub>最終更新 2026-07-27 ／ `bash scripts/70_progress_report.sh` で自動更新（手で編集しないこと）</sub>
+<sub>最終更新 2026-07-31 ／ `bash scripts/70_progress_report.sh` で自動更新（手で編集しないこと）</sub>
 
 <!-- PROGRESS:END -->
 
@@ -291,6 +291,10 @@ data-transfer/
 | [`docs/master-checklist.md`](docs/master-checklist.md) | 📋 **マスターチェックリスト**。本番移行までの決定・検証事項75件と成果物158件の全件一覧・消化状況 |
 | [`SETUP_GUIDE.md`](SETUP_GUIDE.md) | **環境の作り方・操作・トラブル対処**（IT初心者向け・目次/用語集つき） |
 | [`docs/migration-strategy.md`](docs/migration-strategy.md) | 本番移行方式の全体設計 |
+| [`docs/delta-method-decision-matrix.md`](docs/delta-method-decision-matrix.md) | **差分方式の採用判断表**。更新日時・変更キー・パーティション・LOB・フォールバックの選択基準 |
+| [`docs/update-timestamp-subdump-design.md`](docs/update-timestamp-subdump-design.md) | 更新日時差分Data Pumpの前提、境界、DELETE補完、再実行設計 |
+| [`docs/dirty-key-snapshot-design.md`](docs/dirty-key-snapshot-design.md) | LogMiner変更キー＋SCN固定スナップショットの構成、UNDO、双方向搬送、既存管理表との統合 |
+| [`docs/delta-performance-poc-plan.md`](docs/delta-performance-poc-plan.md) | 差分方式の正確性・性能比較PoC計画と作成予定成果物 |
 | [`docs/delta-extract-design.md`](docs/delta-extract-design.md) | 差分抽出・適用方式の詳細設計 |
 | [`docs/phase2-transform-design.md`](docs/phase2-transform-design.md) | STAGING(1.0)→TARGET(2.0) 変換層の設計 |
 | [`docs/ops-config-design.md`](docs/ops-config-design.md) | 運用パラメータ（しきい値・保持・バッチ等）の設計 |

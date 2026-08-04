@@ -1320,6 +1320,25 @@ PROCEDURE UPDATE_MINED_CHG_STATUS (
 
 詳細は `docs/handoff-guide.md` TMP-12 および設計メモ P4-22 を参照。
 
+### 10.5 テーブル別の差分方式と変更キー候補
+
+2026-07-28の再評価により、段3の適用方式は全表一律のSQL_REDO再実行に固定しない。
+更新日時直接Export、固定差分表、LogMiner変更キー + SCN固定スナップショット、
+パーティションExport、LOB専用再同期、現行方式をテーブル単位で選択する。
+
+変更キー方式を採る場合も、`LOGMINER_BATCH`、`MINED_TRANSACTION`、`MINED_CHANGE`、
+`APPLY_BATCH`、`APPLY_TASK`、`MIG_CHECKPOINT` は再利用する。役割が重なる管理表を別名で新設しない。
+
+移行先LogMinerで変更キーを取得して移行元を `AS OF SCN` で読む構成は、
+変更キー要求を移行先から移行元へ戻す逆方向搬送と、その往復時間を含むUNDO保持を必要とする。
+この構成を自動採用せず、移行元で変更キー抽出とスナップショット固定を連続実行する構成と比較PoCする。
+
+詳細:
+
+- `docs/delta-method-decision-matrix.md`
+- `docs/dirty-key-snapshot-design.md`
+- `docs/delta-performance-poc-plan.md`
+
 ---
 
 ## 11. 制約事項（環境制約で検証不可なもの）
@@ -1333,6 +1352,7 @@ PROCEDURE UPDATE_MINED_CHG_STATUS (
 | **P4-01** | DB1.0 Archived RedoをDB2.0で解析するPoC | PoC 実施中（2026-07-31 期限） | COMMIT_SCN / XID / SQL_REDO / CSF の正常取得、複合主キー、LOB対応 |
 | **P4-04** | LogMiner 処理単位（SCN 範囲・バッチ境界） | 規模が検証データと本番で桁違い | 長時間トランザクション跨ぎ、バッチ境界の重複、再実行単位 |
 | **P4-23** | 全体処理速度・追付き性能 | 測定可能な規模のデータがない | LogMiner 解析速度、1.0スキーマ反映速度、1日当たりのログ生成速度 |
+| **UNV-10** | 変更キー要求の逆方向搬送とUNDO保持 | 単一ホスト共有ボリュームでは本番の物理搬送時間を再現できない | C1/C2構成比較、要求往復時間、必要UNDO、ORA-01555、再送、セキュリティ |
 
 ---
 

@@ -1,35 +1,35 @@
 {
   "domain": "学習",
-  "updated_at": "2026-07-28",
-  "headline": "Data Pump ボトルネック調査完了。QUERY句がdirect_pathを無効化する等の仕様事実を確認。次は二本立て方式（差分ダンプ+LogMiner）の設計書着手。",
-  "source": "git log, docs/datapump-performance-analysis.md, docs/handoff-guide.md",
+  "updated_at": "2026-07-31",
+  "headline": "適応型差分方式の再評価を設計へ反映。方式判断・2方式詳細・PoC計画を作成し、次はテーブル棚卸しと正確性PoC。",
+  "source": "docs/delta-method-decision-matrix.md, docs/update-timestamp-subdump-design.md, docs/dirty-key-snapshot-design.md, docs/delta-performance-poc-plan.md",
   "items": [
     {
-      "title": "Data Pump ボトルネック調査（docs/datapump-performance-analysis.md）",
-      "status": "✅ 完了",
-      "summary": "PARALLEL/COMPRESSION=DATA_ONLYがXEで使用不可を実機確認。LOBあり表は行あたり6.3倍遅く、Export:Import:索引再構築=64%:33%:3%。QUERY句がdirect_pathを無効化する仕様事実も確認。計測スクリプト(74_benchmark_datapump.sh)を本番向けに整備済み。",
-      "next": "調査結果を踏まえ、二本立て方式（更新日時ベース差分ダンプ+LogMiner）の設計書を作成する",
-      "link": "docs/datapump-performance-analysis.md"
+      "title": "差分方式の再評価と判断",
+      "status": "✅ 設計反映完了",
+      "summary": "Oracle公式仕様と現行実測を照合し、更新日時の有無だけで決める二分法から、更新日時・固定差分表・変更キー・パーティション・LOB・現行LogMinerを使い分ける適応型へ更新。更新日時方式単独ではDELETEと長時間Txの欠落ゼロを証明できないことを明記。",
+      "next": "本番約500表の主キー・更新日時・DML・LOB・パーティション情報を棚卸しする",
+      "link": "docs/delta-method-decision-matrix.md"
     },
     {
-      "title": "二本立て方式設計（次段: 未着手）",
-      "status": "📋 未着手",
-      "summary": "UPDATED_AT索引が全表ゼロのため差分抽出は全表フルスキャン確定。QUERY句を使うとdirect_pathが無効化される。これらを踏まえた設計書が必要。",
-      "next": "UPDATED_AT有り表は差分ダンプ方式・UPDATED_ATなし表はLogMiner方式の選択基準と実装方針を設計書に記述する",
-      "link": "docs/datapump-performance-analysis.md"
+      "title": "LogMiner変更キー + SCN固定スナップショット",
+      "status": "🟡 設計候補・PoC待ち",
+      "summary": "移行先LogMinerでは変更キー要求を移行元へ戻す逆方向搬送が必要で、搬送往復を含むUNDO保持が成立条件。移行元LogMinerで直ちに固定する構成との比較を必須化。既存Phase4管理表は再利用する。",
+      "next": "C1（移行先LogMiner）とC2（移行元LogMiner）の正確性・UNDO・ソース影響を比較する",
+      "link": "docs/dirty-key-snapshot-design.md"
     },
     {
-      "title": "Phase4段1: 管理テーブルDDL + PKG_MIG_ADMIN v5.0 + E2Eテスト",
-      "status": "✅ 完了",
-      "summary": "09_phase4_tables.sql（6テーブル）・10_pkg_mig_admin_phase4.sql（29本API）・72_test_phase4_tables_e2e.sh（T01-T15全PASS）。quality-reviewerの指摘も全修正済み。",
-      "next": "Phase4段2（LogMiner実行スクリプト・解析結果登録）の設計・実装に着手する",
-      "link": "scripts/72_test_phase4_tables_e2e.sh"
+      "title": "差分方式PoC計画",
+      "status": "📋 計画済み・実施未完了",
+      "summary": "棚卸し、正確性、代表3表比較、C1/C2構成比較、本番相当試験の順序と、scripts/73・75〜79等の作成予定成果物を定義。共通合格条件は欠落0、最終重複0、同一SCN断面、再実行一致。",
+      "next": "P0棚卸しスクリプトと方式カタログの実装仕様を確定する",
+      "link": "docs/delta-performance-poc-plan.md"
     },
     {
       "title": "Phase4 全体進捗（P4-01〜P4-26）",
       "status": "🟡 進行中（10/26完了）",
-      "summary": "段1完了（管理テーブル+API+E2E）。段2（LogMiner実行・解析結果登録）・段3（差分適用）が未実装。P4-01（LogMiner PoC・期限2026-07-31）が近い。",
-      "next": "段2: DBMS_LOGMNR呼び出し・V$LOGMNR_CONTENTS取得・BULK_INS系APIを使った登録スクリプトを実装する",
+      "summary": "段1の管理テーブル・API・E2Eは完了。適応型方式の設計を追加。段2のLogMiner解析結果登録、段3の差分適用、方式別PoCは未実装。",
+      "next": "棚卸しと正確性PoCの設計を段2実装へ統合する",
       "link": "docs/phase4-design.md"
     }
   ]

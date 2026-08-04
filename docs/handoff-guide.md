@@ -122,6 +122,7 @@
 | **UNV-07** | フェーズ1・2（Data Pump Export/Import）の本番相当検証 | 規模・媒体・ファイルサーバがいずれも異なる | 上記 UNV-02/03/05 とセットで実施 |
 | **UNV-08** | 文字コード・各国語設定 | 検証環境は単一の文字セット | 移行元・移行先の NLS 設定差と変換影響 |
 | **UNV-09** | Data Pump PARALLEL・COMPRESSION 有効時の性能（Enterprise Edition） | 21c XE はエディション制限で PARALLEL/COMPRESSION=DATA_ONLY が使用不可（ORA-39094/ORA-00439 で即エラー） | PARALLEL=N（Nはコア数に応じて）とCOMPRESSION=DATA_ONLYを有効にした場合の所要時間・スループット・ダンプサイズ削減効果 |
+| **UNV-10** | LogMiner変更キー要求の逆方向搬送とUNDO保持 | 単一ホストの共有ボリュームでは本番のオフライン搬送時間を再現できない | 移行先LogMiner(C1)と移行元LogMiner(C2)の比較、要求往復時間、必要UNDO、ORA-01555、再送、セキュリティ |
 
 ### 5.2 社内で「詳細再調査の対象外」と決めているもの
 
@@ -132,13 +133,28 @@
 - Oracle 12c の 12.1／12.2 差による方式再検討
 - プラットフォーム互換性の再検討
 - 文字コード・各国語設定の**方式**再検討（※差分の確認自体は UNV-08 として残る）
-- 主キー・複合主キーの全件詳細棚卸し
+- 主キー・複合主キーの全件詳細棚卸し（2026-07-28の方針更新により再調査へ戻す。§5.3）
 - テーブル変換パターン自体の再分類
-- テーブルごとの DML 種別調査
-- Supplemental Logging の負荷増加の詳細検証
+- テーブルごとの DML 種別調査（2026-07-28の方針更新により再調査へ戻す。§5.3）
+- Supplemental Logging の負荷増加の詳細検証（2026-07-28の方針更新により再調査へ戻す。§5.3）
 - DDL 凍結可否
 - LogMiner Unsupported 操作の網羅調査
 - 1万件単位 COMMIT の再検討
+
+### 5.3 適応型差分方式により再調査へ戻した項目
+
+更新日時方式、LogMiner変更キー方式、LOB専用方式をテーブルごとに選ぶには、従来の対象外項目の一部が
+採用判断の前提になる。2026-07-28以降は次を有効な調査対象として扱う。
+
+| 項目 | 理由 | 成果物 |
+|---|---|---|
+| 主キー・複合主キーの全件棚卸し | `MINE_VALUE`による旧・新キー取得と型対応可否を判定する | PK列順・型・更新有無一覧 |
+| テーブルごとのDML種別・ユニーク変更キー数 | 更新日時方式と変更キー方式の損益を判定する | 日次DML・ユニークキー・反復更新一覧 |
+| Supplemental Loggingの負荷 | 主キー取得の正確性と業務影響を両立させる | 表単位設定案・REDO増加実測 |
+| 更新日時の信頼性 | 遅延コミット、例外経路、DELETEを評価する | 更新日時設定主体・精度・TZ・最大Tx一覧 |
+
+判断基準と試験計画は `delta-method-decision-matrix.md` と
+`delta-performance-poc-plan.md` を参照する。
 
 ---
 
@@ -188,7 +204,7 @@
 | フェーズ1（全量Export） | ✅ 実行資材・E2E PASS | 正式資材 `sql/phase1/` / `scripts/63_run_expdp.sh` 等を整備。`scripts/66_test_phase1_2_e2e.sh` T01〜T16 PASS（2026-07-27）。ただし本番500表・5TB規模の性能/容量は未検証 |
 | フェーズ2（全量Import） | ✅ 実行資材・E2E PASS | REMAP_SCHEMA、DDLプレビュー、Import監視、件数突合、COMPLETE_PHASE機械判定まで実機確認済み。LOB全量Importや特殊型は未検証項目として残る |
 | フェーズ3（Archived Redo収集） | ✅ 実行資材・E2E PASS | `sql/phase3/`（5本）、`scripts/67_collect_archivelogs.sh`、`68_build_logminer_dict.sh`、`69_test_phase3_e2e.sh`、`08_views_phase3.sql` を実装。T01〜T08 PASS。CDB$ROOT 辞書ビルド、辞書マーカー確認、収集台帳、最終ログ確定、COMPLETE_PHASE3 を確認済み |
-| フェーズ4（差分反映） | 🟡 段1設計完了 / ❌ 段2・段3未実装 | 管理テーブル設計（段1）完了: `docs/phase4-design.md`・`migration-control-schema-design.md` v4.0。6テーブル DDL・PKG_MIG_ADMIN Phase4 API 設計を確定。LogMiner解析結果登録（段2）・差分適用（段3）は未実装。旧方式（移行元でLogMiner実行）の E2E は PASS 済み（UNV-06 参照） |
+| フェーズ4（差分反映） | 🟡 段1設計完了 / 🟡 適応型方式設計 / ❌ 段2・段3未実装 | 管理テーブル設計（段1）完了。2026-07-28に更新日時・変更キー・パーティション・LOBを使い分ける判断表とPoC計画を追加。LogMiner解析結果登録（段2）・差分適用（段3）と方式別PoCは未実装。旧方式（移行元でLogMiner実行）の E2E は PASS 済み（UNV-06/10 参照） |
 | フェーズ5（1.0→2.0変換） | ✅ 旧資産は実データE2E PASS / 🟡 新設計統合は未 | 同一PDB内変換ロジック、二段階検証、LOBパススルーはE2E PASS。新しい migration_ctl と Phase4 結果を前提にした最終合格基準・切替手順は未形式化 |
 
 > **フェーズ4の解釈に注意。** この環境で厚く作り込まれているのは**旧アーキテクチャ**であり、

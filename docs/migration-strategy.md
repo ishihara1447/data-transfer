@@ -51,6 +51,25 @@
 
 ## 4. 採用方式：Flashback SCN基準 DataPump ＋ 差分Redo適用
 
+### 2026-07-28 差分方式の方針更新
+
+初回全量移行を `FLASHBACK_SCN` 付き Data Pump、差分の正確性境界をコミットSCNとする大方針は維持する。
+一方、差分反映は全表へ同じ方式を適用せず、テーブル特性に応じて次から選ぶ。
+
+- 更新日時条件の直接 `expdp QUERY`
+- 更新日時条件で固定差分表を作成してExport
+- LogMiner変更キー + SCN固定スナップショット
+- 既存パーティション単位Export
+- LOB専用再同期
+- 現行LogMiner方式
+
+更新日時列の有無だけでは方式を決めない。更新日時の信頼性、遅延コミット、DELETE、主キー、LOB、
+パーティション、差分率、ソース影響を棚卸しし、正確性・性能PoC後にテーブル群ごとの方式を確定する。
+
+判断基準は `docs/delta-method-decision-matrix.md`、方式詳細は
+`docs/update-timestamp-subdump-design.md` と `docs/dirty-key-snapshot-design.md`、
+試験計画は `docs/delta-performance-poc-plan.md` を正とする。
+
 ### 全体フロー
 
 ```
